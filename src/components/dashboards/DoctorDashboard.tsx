@@ -122,6 +122,37 @@ const DoctorDashboard = () => {
 
   return (
     <DashboardLayout title="Doctor Dashboard" role="Doctor">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">Total Referrals</p>
+              <p className="text-3xl font-bold">{referrals.length}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">Pending</p>
+              <p className="text-3xl font-bold text-warning">
+                {referrals.filter(r => r.status === "pending").length}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">Completed</p>
+              <p className="text-3xl font-bold text-success">
+                {referrals.filter(r => r.status === "completed").length}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="mb-6 flex justify-between items-center">
         <div>
           <p className="text-muted-foreground">Manage patient referrals</p>
