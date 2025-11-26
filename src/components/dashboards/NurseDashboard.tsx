@@ -102,6 +102,39 @@ const NurseDashboard = () => {
 
   return (
     <DashboardLayout title="Nurse Dashboard" role="Nurse">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">Assigned to Me</p>
+              <p className="text-3xl font-bold">
+                {referrals.filter(r => r.assigned_nurse_id).length}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">In Progress</p>
+              <p className="text-3xl font-bold text-primary">
+                {referrals.filter(r => r.status === "in_progress").length}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-1">Completed</p>
+              <p className="text-3xl font-bold text-success">
+                {referrals.filter(r => r.status === "completed").length}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="mb-6">
         <p className="text-muted-foreground">Monitor and manage patient referrals</p>
       </div>
