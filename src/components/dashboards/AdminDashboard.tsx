@@ -153,11 +153,14 @@ const AdminDashboard = () => {
   const [loadingFacilities, setLoadingFacilities] = useState(false);
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [loadingPendingUsers, setLoadingPendingUsers] = useState(false);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [loadingReferrals, setLoadingReferrals] = useState(false);
 
   useEffect(() => {
     fetchStats();
     fetchFacilityLevels();
     fetchPendingUsers();
+    fetchReferrals();
   }, []);
 
   useEffect(() => {
@@ -196,6 +199,23 @@ const AdminDashboard = () => {
       console.error("Error fetching pending users:", error);
     } finally {
       setLoadingPendingUsers(false);
+    }
+  };
+
+  const fetchReferrals = async () => {
+    setLoadingReferrals(true);
+    try {
+      const { data, error } = await supabase
+        .from("referrals")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setReferrals(data || []);
+    } catch (error) {
+      console.error("Error fetching referrals:", error);
+    } finally {
+      setLoadingReferrals(false);
     }
   };
 
@@ -328,25 +348,20 @@ const AdminDashboard = () => {
     }
   };
 
-  // Consistent mock data counts across the dashboard
+  // Mock data counts for user role sections
   const mockCounts = {
     doctors: { total: 45, active: 42, suspended: 2, deactivated: 1 },
     nurses: { total: 32, active: 28, suspended: 3, deactivated: 1 },
     patients: { total: 156, active: 148, suspended: 5, deactivated: 3 },
     pharmacists: { total: 18, active: 16, suspended: 1, deactivated: 1 },
     labTechnicians: { total: 12, active: 11, suspended: 1, deactivated: 0 },
-    totalReferrals: 247,
-    pendingReferrals: 38,
-    activeFacilities: 19,
   };
 
-  const totalProviders = mockCounts.doctors.total + mockCounts.nurses.total + mockCounts.pharmacists.total + mockCounts.labTechnicians.total;
-
   const dashboardStats = [
-    { label: "Total Referrals", value: mockCounts.totalReferrals.toString(), icon: ClipboardList, color: "bg-primary", change: "+12%" },
-    { label: "Active Facilities", value: mockCounts.activeFacilities.toString(), icon: Building2, color: "bg-success", change: "+5%" },
-    { label: "Healthcare Providers", value: totalProviders.toString(), icon: UserCircle, color: "bg-accent", change: "+8%" },
-    { label: "Pending Reviews", value: mockCounts.pendingReferrals.toString(), icon: Clock, color: "bg-warning", change: "-3%" }
+    { label: "Total Referrals", value: stats.totalReferrals.toString(), icon: ClipboardList, color: "bg-primary", change: "+12%" },
+    { label: "Active Facilities", value: dbFacilities.filter(f => f.status === "active").length.toString(), icon: Building2, color: "bg-success", change: "+5%" },
+    { label: "Total Users", value: stats.totalUsers.toString(), icon: UserCircle, color: "bg-accent", change: "+8%" },
+    { label: "Pending Referrals", value: stats.pendingReferrals.toString(), icon: Clock, color: "bg-warning", change: "-3%" }
   ];
 
   const facilities = [
@@ -449,13 +464,6 @@ const AdminDashboard = () => {
               </Button>
             </CollapsibleContent>
           </Collapsible>
-          <Button
-            variant={activeTab === "providers" ? "secondary" : "ghost"}
-            className="w-full justify-start gap-3 mb-2"
-            onClick={() => setActiveTab("providers")}
-          >
-            <UserCircle size={20} /> Providers
-          </Button>
           
           <Collapsible open={usersOpen} onOpenChange={setUsersOpen}>
             <CollapsibleTrigger asChild>
@@ -656,10 +664,52 @@ const AdminDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-center py-8 text-muted-foreground">
-                    <ClipboardList className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>All referrals from the system will be displayed here</p>
-                  </div>
+                  {loadingReferrals ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    </div>
+                  ) : referrals.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <ClipboardList className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No referrals found</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {referrals.map((referral) => (
+                        <div key={referral.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
+                              <ClipboardList className="text-primary" size={24} />
+                            </div>
+                            <div>
+                              <p className="font-semibold">{referral.reason}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {referral.facility_from} → {referral.facility_to}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Diagnosis: {referral.diagnosis || "N/A"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <Badge 
+                              variant={referral.urgency === 'high' ? 'destructive' : referral.urgency === 'medium' ? 'default' : 'secondary'}
+                            >
+                              {referral.urgency}
+                            </Badge>
+                            <Badge 
+                              variant={referral.status === 'completed' ? 'default' : referral.status === 'pending' ? 'outline' : 'secondary'}
+                            >
+                              {referral.status}
+                            </Badge>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(referral.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
