@@ -130,6 +130,7 @@ export type Database = {
           created_at: string
           id: string
           message: string
+          recipient: string | null
           status: string | null
           subject: string
           updated_at: string
@@ -140,6 +141,7 @@ export type Database = {
           created_at?: string
           id?: string
           message: string
+          recipient?: string | null
           status?: string | null
           subject: string
           updated_at?: string
@@ -150,6 +152,7 @@ export type Database = {
           created_at?: string
           id?: string
           message?: string
+          recipient?: string | null
           status?: string | null
           subject?: string
           updated_at?: string
@@ -200,6 +203,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          is_read: boolean | null
+          message: string
+          related_id: string | null
+          related_type: string | null
+          title: string
+          type: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          message: string
+          related_id?: string | null
+          related_type?: string | null
+          title: string
+          type?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          message?: string
+          related_id?: string | null
+          related_type?: string | null
+          title?: string
+          type?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
