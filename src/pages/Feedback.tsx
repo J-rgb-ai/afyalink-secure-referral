@@ -23,6 +23,7 @@ const Feedback = () => {
     subject: "",
     message: "",
     category: "general",
+    recipient: "admin",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,6 +50,7 @@ const Feedback = () => {
         subject: formData.subject,
         message: formData.message,
         category: formData.category,
+        recipient: formData.recipient,
       });
 
       if (error) throw error;
@@ -58,7 +60,7 @@ const Feedback = () => {
         description: "Your feedback has been submitted successfully!",
       });
 
-      setFormData({ subject: "", message: "", category: "general" });
+      setFormData({ subject: "", message: "", category: "general", recipient: "admin" });
     } catch (error) {
       console.error("Error submitting feedback:", error);
       toast({
@@ -101,6 +103,24 @@ const Feedback = () => {
 
         <div className="bg-card border border-border rounded-lg p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <Label htmlFor="recipient">Send To</Label>
+              <Select
+                value={formData.recipient}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, recipient: value })
+                }
+              >
+                <SelectTrigger id="recipient">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="doctor">Doctor</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div>
               <Label htmlFor="category">Category</Label>
               <Select
