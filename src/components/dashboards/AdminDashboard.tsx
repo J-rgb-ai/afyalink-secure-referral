@@ -169,6 +169,10 @@ const AdminDashboard = () => {
   const [activatedUsers, setActivatedUsers] = useState<Set<string>>(new Set());
   const [healthcareProviders, setHealthcareProviders] = useState<HealthcareProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const [allNotifications, setAllNotifications] = useState<any[]>([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [newNotification, setNewNotification] = useState({ title: "", message: "", recipient: "all" });
+  const [sendingNotification, setSendingNotification] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -176,6 +180,7 @@ const AdminDashboard = () => {
     fetchPendingUsers();
     fetchReferrals();
     fetchHealthcareProviders();
+    fetchAllNotifications();
   }, []);
 
   useEffect(() => {
@@ -273,6 +278,78 @@ const AdminDashboard = () => {
       console.error("Error fetching healthcare providers:", error);
     } finally {
       setLoadingProviders(false);
+    }
+  };
+
+  const fetchAllNotifications = async () => {
+    setLoadingNotifications(true);
+    try {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      setAllNotifications(data || []);
+    } catch (error: any) {
+      console.error("Error fetching notifications:", error);
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
+  const sendNotification = async () => {
+    if (!newNotification.title || !newNotification.message) {
+      toast({
+        title: "Error",
+        description: "Please fill in title and message",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSendingNotification(true);
+    try {
+      let targetUsers: string[] = [];
+
+      if (newNotification.recipient === "all") {
+        const { data } = await supabase.from("profiles").select("id").eq("status", "active");
+        targetUsers = (data || []).map((u) => u.id);
+      } else {
+        const { data } = await supabase
+          .from("user_roles")
+          .select("user_id")
+          .eq("role", newNotification.recipient as "admin" | "doctor" | "nurse" | "patient" | "pharmacist" | "lab_technician");
+        targetUsers = (data || []).map((u) => u.user_id);
+      }
+
+      const notifications = targetUsers.map((userId) => ({
+        user_id: userId,
+        title: newNotification.title,
+        message: newNotification.message,
+        type: "admin",
+      }));
+
+      if (notifications.length > 0) {
+        const { error } = await supabase.from("notifications").insert(notifications);
+        if (error) throw error;
+      }
+
+      toast({
+        title: "Success",
+        description: `Notification sent to ${targetUsers.length} user(s)`,
+      });
+      setNewNotification({ title: "", message: "", recipient: "all" });
+      fetchAllNotifications();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to send notification",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingNotification(false);
     }
   };
 
@@ -663,6 +740,13 @@ const AdminDashboard = () => {
             onClick={() => setActiveTab("security")}
           >
             <Shield size={20} /> Security & Audit
+          </Button>
+          <Button
+            variant={activeTab === "notifications" ? "secondary" : "ghost"}
+            className="w-full justify-start gap-3 mb-2"
+            onClick={() => setActiveTab("notifications")}
+          >
+            <Bell size={20} /> Notifications
           </Button>
           
           <div className="my-4 border-t border-primary-foreground/20" />
@@ -1832,6 +1916,99 @@ const AdminDashboard = () => {
                       <span className="text-sm font-semibold">30 minutes</span>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === "notifications" && (
+            <div>
+              <h1 className="text-3xl font-bold mb-6">Notifications Management</h1>
+              
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle>Send Notification</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="notif-recipient">Send To</Label>
+                      <Select
+                        value={newNotification.recipient}
+                        onValueChange={(value) =>
+                          setNewNotification({ ...newNotification, recipient: value })
+                        }
+                      >
+                        <SelectTrigger id="notif-recipient">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Users</SelectItem>
+                          <SelectItem value="admin">Admins</SelectItem>
+                          <SelectItem value="doctor">Doctors</SelectItem>
+                          <SelectItem value="nurse">Nurses</SelectItem>
+                          <SelectItem value="patient">Patients</SelectItem>
+                          <SelectItem value="pharmacist">Pharmacists</SelectItem>
+                          <SelectItem value="lab_technician">Lab Technicians</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="notif-title">Title</Label>
+                      <Input
+                        id="notif-title"
+                        placeholder="Notification title"
+                        value={newNotification.title}
+                        onChange={(e) =>
+                          setNewNotification({ ...newNotification, title: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="notif-message">Message</Label>
+                      <Input
+                        id="notif-message"
+                        placeholder="Notification message"
+                        value={newNotification.message}
+                        onChange={(e) =>
+                          setNewNotification({ ...newNotification, message: e.target.value })
+                        }
+                      />
+                    </div>
+                    <Button onClick={sendNotification} disabled={sendingNotification}>
+                      {sendingNotification ? "Sending..." : "Send Notification"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sent Notifications</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loadingNotifications ? (
+                    <p className="text-center text-muted-foreground py-4">Loading...</p>
+                  ) : allNotifications.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-4">No notifications sent yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {allNotifications.map((notif) => (
+                        <div key={notif.id} className="p-3 bg-muted/30 rounded-lg">
+                          <div className="flex items-center justify-between">
+                            <p className="font-semibold">{notif.title}</p>
+                            <Badge variant={notif.is_read ? "secondary" : "default"}>
+                              {notif.is_read ? "Read" : "Unread"}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{notif.message}</p>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            {new Date(notif.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
