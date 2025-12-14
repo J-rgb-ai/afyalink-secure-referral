@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { dataApi } from "@/lib/api";
 import DashboardLayout from "./DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,18 +30,7 @@ const DoctorDashboard = () => {
 
   const fetchReferrals = async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const { data, error } = await supabase
-        .from("referrals")
-        .select("*, patient:profiles!patient_id(full_name, email)")
-        .or(`referring_doctor_id.eq.${session.user.id},assigned_doctor_id.eq.${session.user.id}`)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
+      const { data } = await dataApi.getReferrals();
       setReferrals(data || []);
     } catch (error) {
       console.error("Error fetching referrals:", error);
@@ -51,39 +40,14 @@ const DoctorDashboard = () => {
   const handleCreateReferral = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return;
-
-      // Find patient by email
-      const { data: patientData, error: patientError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("email", newReferral.patientEmail)
-        .single();
-
-      if (patientError || !patientData) {
-        toast({
-          title: "Error",
-          description: "Patient not found with this email",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const { error } = await supabase.from("referrals").insert({
-        patient_id: patientData.id,
-        referring_doctor_id: session.user.id,
+      await dataApi.createReferral({
+        patientEmail: newReferral.patientEmail,
         facility_from: newReferral.facilityFrom,
         facility_to: newReferral.facilityTo,
         reason: newReferral.reason,
         diagnosis: newReferral.diagnosis,
         urgency: newReferral.urgency,
-        status: "pending",
       });
-
-      if (error) throw error;
 
       toast({ title: "Referral created successfully" });
       setShowForm(false);
@@ -99,7 +63,7 @@ const DoctorDashboard = () => {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.response?.data?.error || error.message,
         variant: "destructive",
       });
     }
@@ -108,15 +72,15 @@ const DoctorDashboard = () => {
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
       case "critical":
-        return "bg-destructive";
+        return "bg-destructive text-destructive-foreground";
       case "high":
-        return "bg-orange-500";
+        return "bg-warning text-warning-foreground";
       case "medium":
-        return "bg-yellow-500";
+        return "bg-secondary text-secondary-foreground"; // Differentiate medium from high
       case "low":
-        return "bg-green-500";
+        return "bg-success text-success-foreground";
       default:
-        return "bg-muted";
+        return "bg-muted text-muted-foreground";
     }
   };
 

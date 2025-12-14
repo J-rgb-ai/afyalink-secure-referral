@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { dataApi } from "@/lib/api";
 import DashboardLayout from "./DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,22 +18,7 @@ const NurseDashboard = () => {
 
   const fetchReferrals = async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const { data, error } = await supabase
-        .from("referrals")
-        .select(`
-          *,
-          patient:profiles!patient_id(full_name, email),
-          referring_doctor:profiles!referring_doctor_id(full_name)
-        `)
-        .or(`assigned_nurse_id.eq.${session.user.id},assigned_nurse_id.is.null`)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
+      const { data } = await dataApi.getReferrals();
       setReferrals(data || []);
     } catch (error) {
       console.error("Error fetching referrals:", error);
@@ -42,12 +27,7 @@ const NurseDashboard = () => {
 
   const handleUpdateStatus = async (referralId: string, newStatus: "pending" | "accepted" | "in_progress" | "completed" | "rejected") => {
     try {
-      const { error } = await supabase
-        .from("referrals")
-        .update({ status: newStatus })
-        .eq("id", referralId);
-
-      if (error) throw error;
+      await dataApi.updateReferral(referralId, { status: newStatus });
 
       toast({ title: "Referral status updated" });
       fetchReferrals();
@@ -62,17 +42,16 @@ const NurseDashboard = () => {
 
   const handleAssignToMe = async (referralId: string) => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const { error } = await supabase
-        .from("referrals")
-        .update({ assigned_nurse_id: session.user.id })
-        .eq("id", referralId);
-
-      if (error) throw error;
+      // Need user ID here? Actually updateReferral just takes data. 
+      // But we need to assign to CURRENT user. 
+      // API endpoint is generic. 
+      // I can ask backend to assign to me? 
+      // Or I can get current user ID first.
+      
+      const { data: userResponse } = await import("@/lib/api").then(m => m.authApi.me());
+      const userId = userResponse.user.id;
+      
+      await dataApi.updateReferral(referralId, { assigned_nurse_id: userId });
 
       toast({ title: "Referral assigned to you" });
       fetchReferrals();
@@ -88,15 +67,15 @@ const NurseDashboard = () => {
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
       case "critical":
-        return "bg-destructive";
+        return "bg-destructive text-destructive-foreground";
       case "high":
-        return "bg-orange-500";
+        return "bg-warning text-warning-foreground";
       case "medium":
-        return "bg-yellow-500";
+        return "bg-secondary text-secondary-foreground";
       case "low":
-        return "bg-green-500";
+        return "bg-success text-success-foreground";
       default:
-        return "bg-muted";
+        return "bg-muted text-muted-foreground";
     }
   };
 

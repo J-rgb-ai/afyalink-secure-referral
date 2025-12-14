@@ -1,12 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 const CTA = () => {
   const navigate = useNavigate();
   
   return (
-    <section className="py-20 bg-gradient-hero relative overflow-hidden">
+    <section id="about" className="py-20 bg-gradient-hero relative overflow-hidden">
       <div className="absolute inset-0 bg-grid-pattern opacity-10" />
       <div className="container mx-auto px-4 relative z-10">
         <div className="max-w-3xl mx-auto text-center animate-fade-in">
@@ -28,10 +29,13 @@ const CTA = () => {
             <Button 
               size="lg" 
               variant="outline" 
-              className="border-2 border-white text-white hover:bg-white hover:text-primary font-semibold text-lg px-8 py-6"
-              onClick={() => navigate("/auth")}
+              className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-primary font-semibold text-lg px-8 py-6"
+              onClick={() => {
+                navigator.clipboard.writeText("vanessakrystal231@gmail.com");
+                toast.success("Email copied to clipboard!");
+              }}
             >
-              Contact Sales
+              Contact
             </Button>
           </div>
         </div>

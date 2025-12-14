@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Heart, Search, ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { dataApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -36,13 +36,7 @@ const FAQ = () => {
 
   const fetchFAQs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("faqs")
-        .select("*")
-        .eq("is_published", true)
-        .order("order_index");
-
-      if (error) throw error;
+      const { data } = await dataApi.getFaqs();
       setFaqs(data || []);
     } catch (error) {
       console.error("Error fetching FAQs:", error);

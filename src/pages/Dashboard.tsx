@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+
 import AdminDashboard from "@/components/dashboards/AdminDashboard";
 import DoctorDashboard from "@/components/dashboards/DoctorDashboard";
 import NurseDashboard from "@/components/dashboards/NurseDashboard";
@@ -22,49 +22,31 @@ const Dashboard = () => {
 
   const fetchUserData = async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        navigate("/auth");
-        return;
-      }
-
-      setUserEmail(session.user.email || "");
-
-      // Fetch profile status
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("status")
-        .eq("id", session.user.id)
-        .single();
-
-      if (profileError) throw profileError;
-      setUserStatus(profile?.status || "pending");
+      const { data } = await import("@/lib/api").then(m => m.authApi.me());
+      
+      const user = data.user;
+      setUserEmail(user.email || "");
+      setUserStatus(user.status || "pending");
 
       // Only fetch roles if user is active
-      if (profile?.status === "active") {
-        const { data, error } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", session.user.id);
-
-        if (error) throw error;
-
-        const roles = data?.map((r) => r.role) || [];
-        setUserRoles(roles);
+      if (user.status === "active") {
+        setUserRoles(user.roles || []);
       }
     } catch (error) {
       console.error("Error fetching user data:", error);
+      navigate("/auth");
     } finally {
       setLoading(false);
     }
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/auth");
+    try {
+      await import("@/lib/api").then(m => m.authApi.logout());
+      navigate("/auth");
+    } catch (error) {
+      console.error("Error logging out", error);
+    }
   };
 
   if (loading) {

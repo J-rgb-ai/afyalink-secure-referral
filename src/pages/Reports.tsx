@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Heart, ArrowLeft, Download, Calendar, Filter, FileText } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -33,23 +33,15 @@ const Reports = () => {
 
   const fetchUserRoles = async () => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
+      const { data: user } = await import("@/lib/api").then(m => m.authApi.me());
+      if (!user) {
         navigate("/auth");
         return;
       }
-
-      const { data } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id);
-
-      setUserRoles(data?.map((r) => r.role) || []);
+      setUserRoles(user.roles || []);
     } catch (error) {
       console.error("Error fetching user roles:", error);
+      navigate("/auth");
     }
   };
 
@@ -67,22 +59,25 @@ const Reports = () => {
 
     try {
       // Fetch data based on report type
-      let query = supabase
-        .from("referrals")
-        .select("*")
-        .gte("created_at", filters.startDate)
-        .lte("created_at", filters.endDate);
-
-      if (filters.status !== "all") {
-        query = query.eq("status", filters.status as any);
+      // Fetch data based on report type
+      // Currently backend only supports getting referrals (all or filtered depending on role).
+      // For now we fetch all referrals and filter in JS as before.
+      const { data } = await import("@/lib/api").then(m => m.dataApi.getReferrals());
+      let dataToProcess = data || [];
+      
+      // Filter by date
+      if (filters.startDate) {
+        dataToProcess = dataToProcess.filter((r: any) => new Date(r.created_at) >= new Date(filters.startDate));
       }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      // Generate report content
-      const reportContent = generateReportContent(data || [], filters);
+      if (filters.endDate) {
+        dataToProcess = dataToProcess.filter((r: any) => new Date(r.created_at) <= new Date(filters.endDate));
+      }
+      
+      if (filters.status !== "all") {
+        dataToProcess = dataToProcess.filter((r: any) => r.status === filters.status);
+      }
+      
+      const reportContent = generateReportContent(dataToProcess, filters);
 
       // Create downloadable file
       const blob = new Blob([reportContent], { type: "text/plain" });

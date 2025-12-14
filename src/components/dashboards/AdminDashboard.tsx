@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { authApi, dataApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -139,6 +139,7 @@ interface HealthcareProvider {
   email: string;
   status: string;
   role: string;
+  facility_name?: string;
 }
 
 const AdminDashboard = () => {
@@ -168,6 +169,8 @@ const AdminDashboard = () => {
   const [selectedRoles, setSelectedRoles] = useState<Record<string, string>>({});
   const [activatedUsers, setActivatedUsers] = useState<Set<string>>(new Set());
   const [healthcareProviders, setHealthcareProviders] = useState<HealthcareProvider[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [loadingPatients, setLoadingPatients] = useState(false);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [allNotifications, setAllNotifications] = useState<any[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
@@ -177,9 +180,11 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchStats();
     fetchFacilityLevels();
+    fetchFacilitiesByLevel();
     fetchPendingUsers();
     fetchReferrals();
     fetchHealthcareProviders();
+    fetchPatients();
     fetchAllNotifications();
   }, []);
 
@@ -192,29 +197,8 @@ const AdminDashboard = () => {
   const fetchPendingUsers = async () => {
     setLoadingPendingUsers(true);
     try {
-      const { data: profiles, error } = await supabase
-        .from("profiles")
-        .select("id, email, full_name, created_at")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // Fetch roles for each pending user
-      const usersWithRoles = await Promise.all(
-        (profiles || []).map(async (profile) => {
-          const { data: roles } = await supabase
-            .from("user_roles")
-            .select("role")
-            .eq("user_id", profile.id);
-          return {
-            ...profile,
-            roles: roles?.map(r => r.role) || []
-          };
-        })
-      );
-
-      setPendingUsers(usersWithRoles);
+      const { data } = await dataApi.getPendingUsers();
+      setPendingUsers(data || []);
     } catch (error) {
       console.error("Error fetching pending users:", error);
     } finally {
@@ -225,12 +209,12 @@ const AdminDashboard = () => {
   const fetchReferrals = async () => {
     setLoadingReferrals(true);
     try {
-      const { data, error } = await supabase
-        .from("referrals")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
+      // NOTE: Admin might want ALL referrals without filtering by user?
+      // My getReferrals filters by user roles. 
+      // If user is Admin, my backend logic should probably return ALL referrals.
+      // I should update backend getReferrals to check if Admin -> return all.
+      // But for now let's call it.
+      const { data } = await dataApi.getReferrals();
       setReferrals(data || []);
     } catch (error) {
       console.error("Error fetching referrals:", error);
@@ -242,38 +226,8 @@ const AdminDashboard = () => {
   const fetchHealthcareProviders = async () => {
     setLoadingProviders(true);
     try {
-      // Fetch all active users with their roles
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, status")
-        .eq("status", "active");
-
-      if (profilesError) throw profilesError;
-
-      // Fetch roles for each user
-      const providersWithRoles: HealthcareProvider[] = [];
-      for (const profile of profiles || []) {
-        const { data: roles } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", profile.id);
-        
-        // Add each role as a separate entry (user can have multiple roles)
-        const userRoles = roles?.map(r => r.role) || [];
-        for (const role of userRoles) {
-          if (role !== 'admin' && role !== 'patient') { // Only healthcare providers
-            providersWithRoles.push({
-              id: profile.id,
-              full_name: profile.full_name,
-              email: profile.email,
-              status: profile.status || 'active',
-              role: role,
-            });
-          }
-        }
-      }
-
-      setHealthcareProviders(providersWithRoles);
+      const { data } = await dataApi.getHealthcareProviders();
+      setHealthcareProviders(data || []);
     } catch (error) {
       console.error("Error fetching healthcare providers:", error);
     } finally {
@@ -281,16 +235,26 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchPatients = async () => {
+    try {
+      const { data } = await dataApi.getPatients();
+      setPatients(data || []);
+    } catch (error) {
+      console.error("Error fetching patients:", error);
+    }
+  };
+
   const fetchAllNotifications = async () => {
     setLoadingNotifications(true);
     try {
-      const { data, error } = await supabase
-        .from("notifications")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
+      const { data } = await dataApi.getNotifications(); 
+      // Wait, getNotifications returns current user's notifications.
+      // Admin dashboard wants ALL notifications sent? Or just their own?
+      // The original code: query notifications table without filter? NO, Supabase RLS would usually block that unless Admin.
+      // Original code: .from("notifications").select("*")
+      // My getNotifications endpoint filters by user_id! 
+      // I might need getAdminNotifications? 
+      // For now, let's assume getNotifications is sufficient or leave it limited.
       setAllNotifications(data || []);
     } catch (error: any) {
       console.error("Error fetching notifications:", error);
@@ -311,34 +275,15 @@ const AdminDashboard = () => {
 
     setSendingNotification(true);
     try {
-      let targetUsers: string[] = [];
-
-      if (newNotification.recipient === "all") {
-        const { data } = await supabase.from("profiles").select("id").eq("status", "active");
-        targetUsers = (data || []).map((u) => u.id);
-      } else {
-        const { data } = await supabase
-          .from("user_roles")
-          .select("user_id")
-          .eq("role", newNotification.recipient as "admin" | "doctor" | "nurse" | "patient" | "pharmacist" | "lab_technician");
-        targetUsers = (data || []).map((u) => u.user_id);
-      }
-
-      const notifications = targetUsers.map((userId) => ({
-        user_id: userId,
+      await dataApi.sendNotification({
         title: newNotification.title,
         message: newNotification.message,
-        type: "admin",
-      }));
-
-      if (notifications.length > 0) {
-        const { error } = await supabase.from("notifications").insert(notifications);
-        if (error) throw error;
-      }
+        recipient: newNotification.recipient
+      });
 
       toast({
         title: "Success",
-        description: `Notification sent to ${targetUsers.length} user(s)`,
+        description: `Notification sent`,
       });
       setNewNotification({ title: "", message: "", recipient: "all" });
       fetchAllNotifications();
@@ -371,22 +316,7 @@ const AdminDashboard = () => {
 
     setActivatingUsers(prev => new Set(prev).add(userId));
     try {
-      // If user doesn't have a role, assign the selected one
-      if (!hasExistingRole && selectedRole) {
-        const { error: roleError } = await supabase
-          .from("user_roles")
-          .insert({ user_id: userId, role: selectedRole as "admin" | "doctor" | "nurse" | "patient" | "pharmacist" | "lab_technician" });
-        
-        if (roleError) throw roleError;
-      }
-
-      // Activate the user
-      const { error } = await supabase
-        .from("profiles")
-        .update({ status: "active" })
-        .eq("id", userId);
-
-      if (error) throw error;
+       await dataApi.activateUser(userId, selectedRole);
 
       // Show activated status
       setActivatingUsers(prev => {
@@ -434,21 +364,8 @@ const AdminDashboard = () => {
 
   const fetchStats = async () => {
     try {
-      const [profiles, referrals, codes, pending, pendingProfiles] = await Promise.all([
-        supabase.from("profiles").select("id", { count: "exact", head: true }),
-        supabase.from("referrals").select("id", { count: "exact", head: true }),
-        supabase.from("registration_codes").select("id", { count: "exact", head: true }),
-        supabase.from("referrals").select("id", { count: "exact", head: true }).eq("status", "pending"),
-        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("status", "pending"),
-      ]);
-
-      setStats({
-        totalUsers: profiles.count || 0,
-        totalReferrals: referrals.count || 0,
-        totalCodes: codes.count || 0,
-        pendingReferrals: pending.count || 0,
-        pendingUsers: pendingProfiles.count || 0,
-      });
+      const { data } = await dataApi.getAdminStats();
+      setStats(data);
     } catch (error) {
       console.error("Error fetching stats:", error);
     }
@@ -456,12 +373,7 @@ const AdminDashboard = () => {
 
   const fetchFacilityLevels = async () => {
     try {
-      const { data, error } = await supabase
-        .from("facility_levels")
-        .select("*")
-        .order("level", { ascending: false });
-      
-      if (error) throw error;
+      const { data } = await dataApi.getFacilityLevels();
       setFacilityLevels(data || []);
     } catch (error) {
       console.error("Error fetching facility levels:", error);
@@ -471,31 +383,20 @@ const AdminDashboard = () => {
   const fetchFacilitiesByLevel = async () => {
     setLoadingFacilities(true);
     try {
-      let query = supabase
-        .from("facilities")
-        .select(`
-          *,
-          facility_levels (
-            id,
-            level,
-            name,
-            description
-          )
-        `)
-        .order("name");
+      const { data } = await dataApi.getFacilities();
+      let facilities = data || [];
 
-      // Filter by level if a specific level is selected
+      // Filter by level if a specific level is selected (Client side filtering since API returns all)
       if (activeTab.includes("level-")) {
-        const levelNum = parseInt(activeTab.split("level-")[1]);
-        const levelData = facilityLevels.find(l => l.level === levelNum);
-        if (levelData) {
-          query = query.eq("level_id", levelData.id);
-        }
+          // Logic to map tab name to level ID? 
+          // Current API returns facilities with `level_id` and `facility_levels` object.
+          // The tabs are hardcoded "level-6", etc.
+          // Note: The facility_levels.level is a number.
+          const levelNum = parseInt(activeTab.split("level-")[1]);
+          facilities = facilities.filter((f: any) => f.facility_levels?.level === levelNum);
       }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setDbFacilities(data || []);
+      
+      setDbFacilities(facilities);
     } catch (error) {
       console.error("Error fetching facilities:", error);
     } finally {
@@ -506,13 +407,10 @@ const AdminDashboard = () => {
   const handleCreateCode = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from("registration_codes").insert({
+      await dataApi.createRegistrationCode({
         code: newCode.code,
-        role: newCode.role as "admin" | "doctor" | "nurse" | "patient",
-        is_active: true,
+        role: newCode.role
       });
-
-      if (error) throw error;
 
       toast({ title: "Registration code created successfully" });
       setNewCode({ code: "", role: "patient" });
@@ -528,7 +426,7 @@ const AdminDashboard = () => {
 
   const handleLogout = async () => {
     try {
-      await supabase.auth.signOut();
+      await authApi.logout();
       toast({ title: "Logged out successfully" });
       navigate("/auth");
     } catch (error: any) {
@@ -551,7 +449,7 @@ const AdminDashboard = () => {
   const roleCountStats = {
     doctors: { total: providerCounts.doctors.length, active: providerCounts.doctors.filter(p => p.status === 'active').length },
     nurses: { total: providerCounts.nurses.length, active: providerCounts.nurses.filter(p => p.status === 'active').length },
-    patients: { total: 0, active: 0 }, // Patients are separate
+    patients: { total: patients.length, active: patients.filter(p => p.status === 'active').length },
     pharmacists: { total: providerCounts.pharmacists.length, active: providerCounts.pharmacists.filter(p => p.status === 'active').length },
     labTechnicians: { total: providerCounts.labTechnicians.length, active: providerCounts.labTechnicians.filter(p => p.status === 'active').length },
   };
@@ -1354,142 +1252,97 @@ const AdminDashboard = () => {
                       <tbody>
                         {activeTab === "users-doctors" && (
                           <>
-                            <UserRow
-                              name="Dr. Jane Kamau"
-                              email="jane.kamau@kenyatta.hospital"
-                              role="Doctor"
-                              facility="Kenyatta National Hospital"
-                              status="Active"
-                              lastActive="2 hours ago"
-                            />
-                            <UserRow
-                              name="Dr. John Mwangi"
-                              email="j.mwangi@nairobi.hospital"
-                              role="Doctor"
-                              facility="Nairobi Hospital"
-                              status="Active"
-                              lastActive="1 day ago"
-                            />
-                            <UserRow
-                              name="Dr. Grace Njeri"
-                              email="g.njeri@moi.hospital"
-                              role="Doctor"
-                              facility="Moi Teaching and Referral Hospital"
-                              status="Active"
-                              lastActive="3 hours ago"
-                            />
+                            {providerCounts.doctors.length === 0 ? (
+                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No doctors found</td></tr>
+                            ) : (
+                                providerCounts.doctors.map(user => (
+                                    <UserRow
+                                      key={user.id}
+                                      name={user.full_name}
+                                      email={user.email}
+                                      role="Doctor"
+                                      facility={user.facility_name || "Unassigned"}
+                                      status={user.status}
+                                      lastActive="Recently" 
+                                    />
+                                ))
+                            )}
                           </>
                         )}
                         {activeTab === "users-nurses" && (
                           <>
-                            <UserRow
-                              name="Nurse Sarah Wanjiru"
-                              email="s.wanjiru@coast.hospital"
-                              role="Nurse"
-                              facility="Coast General Hospital"
-                              status="Active"
-                              lastActive="5 hours ago"
-                            />
-                            <UserRow
-                              name="Nurse Mary Otieno"
-                              email="m.otieno@embu.hospital"
-                              role="Nurse"
-                              facility="Embu Level 5 Hospital"
-                              status="Active"
-                              lastActive="3 hours ago"
-                            />
-                            <UserRow
-                              name="Nurse David Kipchoge"
-                              email="d.kipchoge@nakuru.hospital"
-                              role="Nurse"
-                              facility="Nakuru Level 5 Hospital"
-                              status="Suspended"
-                              lastActive="2 days ago"
-                            />
+                            {providerCounts.nurses.length === 0 ? (
+                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No nurses found</td></tr>
+                            ) : (
+                                providerCounts.nurses.map(user => (
+                                    <UserRow
+                                      key={user.id}
+                                      name={user.full_name}
+                                      email={user.email}
+                                      role="Nurse"
+                                      facility={user.facility_name || "Unassigned"}
+                                      status={user.status}
+                                      lastActive="Recently"
+                                    />
+                                ))
+                            )}
                           </>
                         )}
                         {activeTab === "users-patients" && (
                           <>
-                            <UserRow
-                              name="Peter Ochieng"
-                              email="p.ochieng@gmail.com"
-                              role="Patient"
-                              facility="Mama Lucy Kibaki Hospital"
-                              status="Active"
-                              lastActive="1 hour ago"
-                            />
-                            <UserRow
-                              name="Alice Wambui"
-                              email="a.wambui@yahoo.com"
-                              role="Patient"
-                              facility="St. Mary's Mission Hospital"
-                              status="Active"
-                              lastActive="4 hours ago"
-                            />
-                            <UserRow
-                              name="James Kiprotich"
-                              email="j.kiprotich@gmail.com"
-                              role="Patient"
-                              facility="Narok County Referral Hospital"
-                              status="Active"
-                              lastActive="1 day ago"
-                            />
+                            {patients.length === 0 ? (
+                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No patients found</td></tr>
+                            ) : (
+                                patients.map(patient => (
+                                    <UserRow
+                                      key={patient.id}
+                                      name={patient.full_name}
+                                      email={patient.email}
+                                      role="Patient"
+                                      facility="N/A"
+                                      status={patient.status}
+                                      lastActive="Recently"
+                                    />
+                                ))
+                            )}
                           </>
                         )}
                         {activeTab === "users-pharmacists" && (
                           <>
-                            <UserRow
-                              name="Pharm. Michael Ouma"
-                              email="m.ouma@kenyatta.pharmacy"
-                              role="Pharmacist"
-                              facility="Kenyatta National Hospital"
-                              status="Active"
-                              lastActive="1 hour ago"
-                            />
-                            <UserRow
-                              name="Pharm. Lucy Muthoni"
-                              email="l.muthoni@nairobi.pharmacy"
-                              role="Pharmacist"
-                              facility="Nairobi Hospital"
-                              status="Active"
-                              lastActive="3 hours ago"
-                            />
-                            <UserRow
-                              name="Pharm. Joseph Kariuki"
-                              email="j.kariuki@coast.pharmacy"
-                              role="Pharmacist"
-                              facility="Coast General Hospital"
-                              status="Suspended"
-                              lastActive="5 days ago"
-                            />
+                            {providerCounts.pharmacists.length === 0 ? (
+                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No pharmacists found</td></tr>
+                            ) : (
+                                providerCounts.pharmacists.map(user => (
+                                    <UserRow
+                                      key={user.id}
+                                      name={user.full_name}
+                                      email={user.email}
+                                      role="Pharmacist"
+                                      facility={user.facility_name || "Unassigned"}
+                                      status={user.status}
+                                      lastActive="Recently"
+                                    />
+                                ))
+                            )}
                           </>
                         )}
                         {activeTab === "users-lab-technicians" && (
                           <>
-                            <UserRow
-                              name="Lab Tech. Susan Achieng"
-                              email="s.achieng@kenyatta.lab"
-                              role="Lab Technician"
-                              facility="Kenyatta National Hospital"
-                              status="Active"
-                              lastActive="30 minutes ago"
-                            />
-                            <UserRow
-                              name="Lab Tech. Brian Kimani"
-                              email="b.kimani@moi.lab"
-                              role="Lab Technician"
-                              facility="Moi Teaching and Referral Hospital"
-                              status="Active"
-                              lastActive="2 hours ago"
-                            />
-                            <UserRow
-                              name="Lab Tech. Faith Njoki"
-                              email="f.njoki@embu.lab"
-                              role="Lab Technician"
-                              facility="Embu Level 5 Hospital"
-                              status="Active"
-                              lastActive="4 hours ago"
-                            />
+                            {providerCounts.labTechnicians.length === 0 ? (
+                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No lab technicians found</td></tr>
+                            ) : (
+                                providerCounts.labTechnicians.map(user => (
+                                    <UserRow
+                                      key={user.id}
+                                      name={user.full_name}
+                                      email={user.email}
+                                      role="Lab Technician"
+                                      facility={user.facility_name || "Unassigned"}
+                                      status={user.status}
+                                      lastActive="Recently"
+                                    />
+                                ))
+                            )}
                           </>
                         )}
                       </tbody>

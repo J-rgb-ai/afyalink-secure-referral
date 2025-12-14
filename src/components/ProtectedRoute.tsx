@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Session } from "@supabase/supabase-js";
+import { authApi } from "@/lib/api";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -9,55 +8,25 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
-  const [session, setSession] = useState<Session | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchUserRoles(session.user.id);
-      } else {
+    const checkAuth = async () => {
+      try {
+        const { data } = await authApi.me();
+        setIsAuthenticated(true);
+        setUserRoles(data.user.roles || []);
+      } catch (error) {
+        setIsAuthenticated(false);
+      } finally {
         setLoading(false);
       }
-    });
+    };
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchUserRoles(session.user.id);
-      } else {
-        setUserRoles([]);
-        setLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    checkAuth();
   }, []);
-
-  const fetchUserRoles = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", userId);
-
-      if (error) throw error;
-
-      const roles = data?.map((r) => r.role) || [];
-      setUserRoles(roles);
-    } catch (error) {
-      console.error("Error fetching user roles:", error);
-      setUserRoles([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -67,7 +36,7 @@ const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
     );
   }
 
-  if (!session) {
+  if (!isAuthenticated) {
     return <Navigate to="/auth" replace />;
   }
 

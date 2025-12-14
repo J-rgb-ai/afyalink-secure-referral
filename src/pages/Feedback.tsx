@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Heart, ArrowLeft, Send } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { dataApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,29 +31,12 @@ const Feedback = () => {
     setLoading(true);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        toast({
-          title: "Error",
-          description: "You must be logged in to submit feedback",
-          variant: "destructive",
-        });
-        navigate("/auth");
-        return;
-      }
-
-      const { error } = await supabase.from("feedback").insert({
-        user_id: session.user.id,
+      await dataApi.submitFeedback({
         subject: formData.subject,
         message: formData.message,
         category: formData.category,
         recipient: formData.recipient,
       });
-
-      if (error) throw error;
 
       toast({
         title: "Success",
