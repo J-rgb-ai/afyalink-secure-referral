@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Heart, Search, ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
-import { dataApi } from "@/lib/api";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,35 +18,112 @@ interface FAQ {
   category: string;
 }
 
+/* Static FAQ Data */
+const FAQ_DATA: FAQ[] = [
+  {
+    id: "1",
+    question: "What is AfyaLink?",
+    answer: "AfyaLink is a digital health platform designed to connect patients with healthcare providers, health resources, and essential medical services in a simple, secure, and accessible way.",
+    category: "general"
+  },
+  {
+    id: "2",
+    question: "Who is AfyaLink for?",
+    answer: "AfyaLink is for patients, healthcare providers (doctors, nurses, clinics), and health organizations seeking an efficient way to communicate, manage health information, and improve access to care.",
+    category: "general"
+  },
+  {
+    id: "3",
+    question: "What problems does AfyaLink solve?",
+    answer: "AfyaLink addresses challenges such as limited access to healthcare information, poor patient–provider communication, delayed medical support, and fragmented health records.",
+    category: "general"
+  },
+  {
+    id: "4",
+    question: "What services does AfyaLink offer?",
+    answer: "AfyaLink offers features such as patient profiles, appointment scheduling, health information access, secure communication with healthcare providers, and digital health record management.",
+    category: "services"
+  },
+  {
+    id: "5",
+    question: "Is AfyaLink available on mobile devices?",
+    answer: "Yes. AfyaLink is designed to be mobile-friendly and accessible on smartphones, tablets, and web browsers to ensure ease of use for all users.",
+    category: "technical"
+  },
+  {
+    id: "6",
+    question: "How secure is AfyaLink?",
+    answer: "AfyaLink prioritizes data privacy and security. User data is protected through secure authentication, encryption, and strict access control in compliance with healthcare data protection standards.",
+    category: "security"
+  },
+  {
+    id: "7",
+    question: "Do I need internet access to use AfyaLink?",
+    answer: "Basic functionality requires internet access. However, AfyaLink aims to support low-bandwidth environments and alternative access methods where possible.",
+    category: "technical"
+  },
+  {
+    id: "8",
+    question: "Is AfyaLink free to use?",
+    answer: "AfyaLink offers core features for free. Some advanced services may be available through partnerships or premium plans, depending on user needs.",
+    category: "general"
+  },
+  {
+    id: "9",
+    question: "Can healthcare providers join AfyaLink?",
+    answer: "Yes. Healthcare providers can register on AfyaLink to manage patient interactions, appointments, and medical information more efficiently.",
+    category: "providers"
+  },
+  {
+    id: "10",
+    question: "How do I register on AfyaLink?",
+    answer: "Users can register by creating an account using their basic details through the AfyaLink platform and completing the required verification steps.",
+    category: "account"
+  },
+  {
+    id: "11",
+    question: "Can AfyaLink be used in rural or underserved areas?",
+    answer: "Yes. AfyaLink is built with inclusivity in mind and aims to support users in both urban and rural areas by optimizing performance and accessibility.",
+    category: "general"
+  },
+  {
+    id: "12",
+    question: "Who manages and maintains AfyaLink?",
+    answer: "AfyaLink is managed by a dedicated development and health innovation team focused on improving healthcare access through technology.",
+    category: "general"
+  },
+  {
+    id: "13",
+    question: "How can I get support if I face issues using AfyaLink?",
+    answer: "Users can access support through the help center, in-app support options, or by contacting the AfyaLink support team.",
+    category: "support"
+  },
+  {
+    id: "14",
+    question: "Is AfyaLink compliant with healthcare regulations?",
+    answer: "Yes. AfyaLink is designed to align with relevant healthcare and data protection regulations to ensure ethical and legal use.",
+    category: "security"
+  },
+  {
+    id: "15",
+    question: "How can organizations partner with AfyaLink?",
+    answer: "Organizations interested in partnering with AfyaLink can reach out through the official contact channels to explore collaboration opportunities.",
+    category: "partnerships"
+  }
+];
+
 const FAQ = () => {
   const navigate = useNavigate();
-  const [faqs, setFaqs] = useState<FAQ[]>([]);
-  const [filteredFaqs, setFilteredFaqs] = useState<FAQ[]>([]);
+  const [filteredFaqs, setFilteredFaqs] = useState<FAQ[]>(FAQ_DATA);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("all");
 
   useEffect(() => {
-    fetchFAQs();
-  }, []);
-
-  useEffect(() => {
     filterFAQs();
-  }, [searchQuery, selectedCategory, faqs]);
-
-  const fetchFAQs = async () => {
-    try {
-      const { data } = await dataApi.getFaqs();
-      setFaqs(data || []);
-    } catch (error) {
-      console.error("Error fetching FAQs:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [searchQuery, selectedCategory]);
 
   const filterFAQs = () => {
-    let filtered = faqs;
+    let filtered = FAQ_DATA;
 
     if (selectedCategory !== "all") {
       filtered = filtered.filter((faq) => faq.category === selectedCategory);
@@ -63,7 +140,7 @@ const FAQ = () => {
     setFilteredFaqs(filtered);
   };
 
-  const categories = ["all", ...new Set(faqs.map((faq) => faq.category))];
+  const categories = ["all", ...new Set(FAQ_DATA.map((faq) => faq.category))];
 
   return (
     <div className="min-h-screen bg-background">
@@ -124,11 +201,7 @@ const FAQ = () => {
         </div>
 
         {/* FAQs */}
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          </div>
-        ) : filteredFaqs.length === 0 ? (
+        {filteredFaqs.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">No FAQs found matching your search.</p>
           </div>

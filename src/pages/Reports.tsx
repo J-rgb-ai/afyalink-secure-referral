@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { jsPDF } from "jspdf";
 import { Heart, ArrowLeft, Download, Calendar, Filter, FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -64,7 +65,7 @@ const Reports = () => {
       // For now we fetch all referrals and filter in JS as before.
       const { data } = await import("@/lib/api").then(m => m.dataApi.getReferrals());
       let dataToProcess = data || [];
-      
+
       // Filter by date
       if (filters.startDate) {
         dataToProcess = dataToProcess.filter((r: any) => new Date(r.created_at) >= new Date(filters.startDate));
@@ -72,22 +73,12 @@ const Reports = () => {
       if (filters.endDate) {
         dataToProcess = dataToProcess.filter((r: any) => new Date(r.created_at) <= new Date(filters.endDate));
       }
-      
+
       if (filters.status !== "all") {
         dataToProcess = dataToProcess.filter((r: any) => r.status === filters.status);
       }
-      
-      const reportContent = generateReportContent(dataToProcess, filters);
 
-      // Create downloadable file
-      const blob = new Blob([reportContent], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `AFYALINK_Report_${filters.reportType}_${new Date().toISOString().split("T")[0]}.txt`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      generatePDFReport(dataToProcess, filters);
 
       toast({
         title: "Success",
@@ -105,36 +96,65 @@ const Reports = () => {
     }
   };
 
-  const generateReportContent = (data: any[], filters: any) => {
+  const generatePDFReport = (data: any[], filters: any) => {
+    const doc = new jsPDF();
     const now = new Date();
-    let content = `AFYALINK E-REFERRAL SYSTEM\n`;
-    content += `${filters.reportType.toUpperCase()} REPORT\n`;
-    content += `Generated: ${now.toLocaleString()}\n`;
-    content += `Period: ${filters.startDate} to ${filters.endDate}\n`;
-    content += `Status Filter: ${filters.status}\n`;
-    content += `\n${"=".repeat(60)}\n\n`;
 
-    content += `SUMMARY\n`;
-    content += `Total Records: ${data.length}\n\n`;
+    // Title
+    doc.setFontSize(16);
+    doc.text(`AFYALINK: ${filters.reportType.toUpperCase()} REPORT`, 14, 20);
 
-    if (data.length > 0) {
-      content += `DETAILED RECORDS\n`;
-      content += `${"=".repeat(60)}\n\n`;
+    // Meta details
+    doc.setFontSize(10);
+    doc.text(`Generated: ${now.toLocaleString()}`, 14, 30);
+    doc.text(`Period: ${filters.startDate} to ${filters.endDate}`, 14, 36);
+    doc.text(`Status Filter: ${filters.status}`, 14, 42);
 
-      data.forEach((record, index) => {
-        content += `Record ${index + 1}\n`;
-        content += `ID: ${record.id}\n`;
-        content += `Status: ${record.status}\n`;
-        content += `Facility From: ${record.facility_from}\n`;
-        content += `Facility To: ${record.facility_to}\n`;
-        content += `Urgency: ${record.urgency}\n`;
-        content += `Reason: ${record.reason}\n`;
-        content += `Created: ${new Date(record.created_at).toLocaleString()}\n`;
-        content += `\n${"-".repeat(40)}\n\n`;
-      });
-    }
+    // Summary
+    doc.setFontSize(12);
+    doc.text(`Total Records: ${data.length}`, 14, 55);
 
-    return content;
+    // Table Header
+    const startY = 65;
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text("Status", 14, startY);
+    doc.text("From", 50, startY);
+    doc.text("To", 90, startY);
+    doc.text("Urgency", 130, startY);
+    doc.text("Date", 160, startY);
+
+    // Draw line
+    doc.line(14, startY + 2, 195, startY + 2);
+
+    // Records
+    let y = startY + 10;
+    doc.setTextColor(0);
+
+    data.forEach((record: any) => {
+      // Page break check
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+      }
+
+      doc.text(record.status || "-", 14, y);
+
+      // Truncate long strings
+      const from = record.facility_from?.substring(0, 15) || "-";
+      doc.text(from, 50, y);
+
+      const to = record.facility_to?.substring(0, 15) || "-";
+      doc.text(to, 90, y);
+
+      doc.text(record.urgency || "-", 130, y);
+      doc.text(new Date(record.created_at).toLocaleDateString(), 160, y);
+
+      y += 8;
+    });
+
+    // Save
+    doc.save(`AFYALINK_Report_${filters.reportType}_${now.toISOString().split("T")[0]}.pdf`);
   };
 
   return (

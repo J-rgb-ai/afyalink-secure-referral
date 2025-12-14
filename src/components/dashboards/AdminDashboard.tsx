@@ -3,18 +3,31 @@ import { useNavigate } from "react-router-dom";
 import { authApi, dataApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Plus } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Heart, Users, ClipboardList, TrendingUp, Bell, Search, Settings, LogOut, 
-  CheckCircle, Clock, X, AlertTriangle, Shield, FileText, Building2, 
-  UserCircle, Ban, UserCheck, UserX, MoreVertical, Code, Activity, ChevronDown 
+import {
+  Heart, Users, ClipboardList, TrendingUp, Bell, Search, Settings, LogOut,
+  CheckCircle, Clock, X, AlertTriangle, Shield, FileText, Building2,
+  UserCircle, Ban, UserCheck, UserX, MoreVertical, Code, Activity, ChevronDown
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import AdminSettings from "./settings/AdminSettings";
+import AdminReports from "./reports/AdminReports";
 
 interface UserRowProps {
   name: string;
@@ -30,7 +43,7 @@ function UserRow({ name, email, role, facility, status, lastActive }: UserRowPro
   const [currentStatus, setCurrentStatus] = useState(status);
 
   const getStatusBadge = (status: string) => {
-    switch(status) {
+    switch (status) {
       case "Active":
         return (
           <Badge className="bg-success/10 text-success hover:bg-success/20">
@@ -90,7 +103,7 @@ function UserRow({ name, email, role, facility, status, lastActive }: UserRowPro
           >
             <MoreVertical size={20} />
           </Button>
-          
+
           {showActions && (
             <div className="absolute right-0 mt-2 w-48 bg-card rounded-lg shadow-lg border z-10">
               <button
@@ -146,6 +159,48 @@ const AdminDashboard = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
+
+  // New Facility State
+  const [isAddFacilityOpen, setIsAddFacilityOpen] = useState(false);
+  const [newFacility, setNewFacility] = useState({
+    name: "",
+    type: "",
+    level: "",
+    address: "",
+    contact: ""
+  });
+
+  const handleAddFacility = () => {
+    if (!newFacility.name || !newFacility.type) {
+      toast({
+        title: "Error",
+        description: "Please fill in required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const facilityToAdd = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newFacility.name,
+      type: newFacility.type,
+      facility_levels: {
+        level: parseInt(newFacility.level) || 1,
+        name: `Level ${newFacility.level}`
+      },
+      address: newFacility.address,
+      rating: 0,
+      status: "active"
+    };
+
+    setDbFacilities([facilityToAdd, ...dbFacilities]);
+    setIsAddFacilityOpen(false);
+    setNewFacility({ name: "", type: "", level: "", address: "", contact: "" });
+    toast({
+      title: "Success",
+      description: "Facility added successfully",
+    });
+  };
   const [notifications, setNotifications] = useState(3);
   const [usersOpen, setUsersOpen] = useState(false);
   const [facilitiesOpen, setFacilitiesOpen] = useState(false);
@@ -247,19 +302,39 @@ const AdminDashboard = () => {
   const fetchAllNotifications = async () => {
     setLoadingNotifications(true);
     try {
-      const { data } = await dataApi.getNotifications(); 
-      // Wait, getNotifications returns current user's notifications.
-      // Admin dashboard wants ALL notifications sent? Or just their own?
-      // The original code: query notifications table without filter? NO, Supabase RLS would usually block that unless Admin.
-      // Original code: .from("notifications").select("*")
-      // My getNotifications endpoint filters by user_id! 
-      // I might need getAdminNotifications? 
-      // For now, let's assume getNotifications is sufficient or leave it limited.
+      const { data } = await dataApi.getNotifications();
       setAllNotifications(data || []);
+      // Update unread count for the bell icon
+      setNotifications(data ? data.filter((n: any) => !n.is_read).length : 0);
     } catch (error: any) {
       console.error("Error fetching notifications:", error);
     } finally {
       setLoadingNotifications(false);
+    }
+  };
+
+  const markAsRead = async (id: string) => {
+    try {
+      await dataApi.markNotificationRead(id);
+      setAllNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      );
+      setNotifications((prev) => Math.max(0, prev - 1));
+    } catch (error) {
+      console.error("Failed to mark notification read");
+    }
+  };
+
+  const markAllAsRead = async () => {
+    const unreadIds = allNotifications.filter((n) => !n.is_read).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+
+    try {
+      await dataApi.markAllNotificationsRead();
+      setAllNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setNotifications(0);
+    } catch (error) {
+      console.error("Failed to mark all notifications read");
     }
   };
 
@@ -286,7 +361,9 @@ const AdminDashboard = () => {
         description: `Notification sent`,
       });
       setNewNotification({ title: "", message: "", recipient: "all" });
-      fetchAllNotifications();
+      // Re-fetch to show the new notification if it was sent to self/admin, though in reality it goes to others
+      // But we might want to see it in a "Sent" list? 
+      // For now, assume this is for sending OUT. The bell shows RECEIVED.
     } catch (error: any) {
       toast({
         title: "Error",
@@ -300,11 +377,11 @@ const AdminDashboard = () => {
 
   const handleActivateUser = async (userId: string) => {
     const selectedRole = selectedRoles[userId];
-    
+
     // Check if user already has a role or admin selected one
     const user = pendingUsers.find(u => u.id === userId);
     const hasExistingRole = user?.roles && user.roles.length > 0;
-    
+
     if (!hasExistingRole && !selectedRole) {
       toast({
         title: "Role Required",
@@ -316,7 +393,7 @@ const AdminDashboard = () => {
 
     setActivatingUsers(prev => new Set(prev).add(userId));
     try {
-       await dataApi.activateUser(userId, selectedRole);
+      await dataApi.activateUser(userId, selectedRole);
 
       // Show activated status
       setActivatingUsers(prev => {
@@ -325,12 +402,12 @@ const AdminDashboard = () => {
         return next;
       });
       setActivatedUsers(prev => new Set(prev).add(userId));
-      
-      toast({ 
-        title: "User Activated", 
+
+      toast({
+        title: "User Activated",
         description: "The user can now log in to the system."
       });
-      
+
       // Remove from pending list immediately - don't refetch
       setTimeout(() => {
         setPendingUsers(prev => prev.filter(u => u.id !== userId));
@@ -388,14 +465,14 @@ const AdminDashboard = () => {
 
       // Filter by level if a specific level is selected (Client side filtering since API returns all)
       if (activeTab.includes("level-")) {
-          // Logic to map tab name to level ID? 
-          // Current API returns facilities with `level_id` and `facility_levels` object.
-          // The tabs are hardcoded "level-6", etc.
-          // Note: The facility_levels.level is a number.
-          const levelNum = parseInt(activeTab.split("level-")[1]);
-          facilities = facilities.filter((f: any) => f.facility_levels?.level === levelNum);
+        // Logic to map tab name to level ID? 
+        // Current API returns facilities with `level_id` and `facility_levels` object.
+        // The tabs are hardcoded "level-6", etc.
+        // Note: The facility_levels.level is a number.
+        const levelNum = parseInt(activeTab.split("level-")[1]);
+        facilities = facilities.filter((f: any) => f.facility_levels?.level === levelNum);
       }
-      
+
       setDbFacilities(facilities);
     } catch (error) {
       console.error("Error fetching facilities:", error);
@@ -501,11 +578,11 @@ const AdminDashboard = () => {
                 variant={activeTab.startsWith("facilities") ? "secondary" : "ghost"}
                 className="w-full justify-start gap-3 mb-2"
               >
-                <Building2 size={20} /> 
+                <Building2 size={20} />
                 <span className="flex-1 text-left">Facilities</span>
-                <ChevronDown 
-                  size={16} 
-                  className={`transition-transform ${facilitiesOpen ? "rotate-180" : ""}`} 
+                <ChevronDown
+                  size={16}
+                  className={`transition-transform ${facilitiesOpen ? "rotate-180" : ""}`}
                 />
               </Button>
             </CollapsibleTrigger>
@@ -561,18 +638,18 @@ const AdminDashboard = () => {
               </Button>
             </CollapsibleContent>
           </Collapsible>
-          
+
           <Collapsible open={usersOpen} onOpenChange={setUsersOpen}>
             <CollapsibleTrigger asChild>
               <Button
                 variant={activeTab.startsWith("users") ? "secondary" : "ghost"}
                 className="w-full justify-start gap-3 mb-2"
               >
-                <Users size={20} /> 
+                <Users size={20} />
                 <span className="flex-1 text-left">Healthcare Providers</span>
-                <ChevronDown 
-                  size={16} 
-                  className={`transition-transform ${usersOpen ? "rotate-180" : ""}`} 
+                <ChevronDown
+                  size={16}
+                  className={`transition-transform ${usersOpen ? "rotate-180" : ""}`}
                 />
               </Button>
             </CollapsibleTrigger>
@@ -619,7 +696,7 @@ const AdminDashboard = () => {
             className="w-full justify-start gap-3 mb-2"
             onClick={() => setActiveTab("pending-users")}
           >
-            <Clock size={20} /> 
+            <Clock size={20} />
             <span className="flex-1 text-left">Pending Users</span>
             {stats.pendingUsers > 0 && (
               <Badge className="bg-warning text-warning-foreground">{stats.pendingUsers}</Badge>
@@ -646,13 +723,13 @@ const AdminDashboard = () => {
           >
             <Bell size={20} /> Notifications
           </Button>
-          
+
           <div className="my-4 border-t border-primary-foreground/20" />
-          
+
           <Button
-            variant="ghost"
+            variant={activeTab === "reports" ? "secondary" : "ghost"}
             className="w-full justify-start gap-3 mb-2"
-            onClick={() => navigate("/reports")}
+            onClick={() => setActiveTab("reports")}
           >
             <FileText size={20} /> Reports
           </Button>
@@ -673,7 +750,11 @@ const AdminDashboard = () => {
         </nav>
 
         <div className="p-4 border-t border-primary-foreground/20">
-          <Button variant="ghost" className="w-full justify-start gap-3 mb-2" onClick={() => navigate("/")}>
+          <Button
+            variant={activeTab === "settings" ? "secondary" : "ghost"}
+            className="w-full justify-start gap-3 mb-2"
+            onClick={() => setActiveTab("settings")}
+          >
             <Settings size={20} /> Settings
           </Button>
           <Button variant="ghost" className="w-full justify-start gap-3 text-destructive" onClick={handleLogout}>
@@ -700,14 +781,58 @@ const AdminDashboard = () => {
           </div>
 
           <div className="flex items-center gap-6">
-            <button className="relative">
-              <Bell className="text-muted-foreground" size={24} />
-              {notifications > 0 && (
-                <Badge className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground w-5 h-5 flex items-center justify-center p-0 rounded-full">
-                  {notifications}
-                </Badge>
-              )}
-            </button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="relative focus:outline-none">
+                  <Bell className="text-muted-foreground" size={24} />
+                  {notifications > 0 && (
+                    <Badge className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground w-5 h-5 flex items-center justify-center p-0 rounded-full text-xs">
+                      {notifications}
+                    </Badge>
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-0 bg-card" align="end">
+                <div className="flex items-center justify-between p-3 border-b">
+                  <h4 className="font-semibold">Notifications</h4>
+                  {notifications > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={markAllAsRead}
+                      className="text-xs h-auto py-1 px-2"
+                    >
+                      Mark all read
+                    </Button>
+                  )}
+                </div>
+                <ScrollArea className="h-[300px]">
+                  {allNotifications.length === 0 ? (
+                    <div className="p-4 text-center text-muted-foreground">
+                      No notifications
+                    </div>
+                  ) : (
+                    allNotifications.map((notification) => (
+                      <div
+                        key={notification.id}
+                        className={`p-3 border-b cursor-pointer hover:bg-muted/50 transition-colors ${!notification.is_read ? "bg-primary/5" : ""
+                          }`}
+                        onClick={() => markAsRead(notification.id)}
+                      >
+                        <p className="font-medium text-sm">{notification.title}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {new Date(notification.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </ScrollArea>
+              </PopoverContent>
+            </Popover>
+
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center text-primary-foreground font-semibold">
                 AD
@@ -751,7 +876,7 @@ const AdminDashboard = () => {
           {activeTab === "referrals" && (
             <div>
               <h1 className="text-3xl font-bold mb-6">Referral Management</h1>
-              
+
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -782,7 +907,7 @@ const AdminDashboard = () => {
                   ) : (
                     <div className="space-y-4">
                       {referrals
-                        .filter(referral => 
+                        .filter(referral =>
                           searchQuery === "" ||
                           referral.reason?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           referral.facility_from?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -790,38 +915,38 @@ const AdminDashboard = () => {
                           referral.diagnosis?.toLowerCase().includes(searchQuery.toLowerCase())
                         )
                         .map((referral) => (
-                        <div key={referral.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
-                              <ClipboardList className="text-primary" size={24} />
+                          <div key={referral.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
+                                <ClipboardList className="text-primary" size={24} />
+                              </div>
+                              <div>
+                                <p className="font-semibold">{referral.reason}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {referral.facility_from} → {referral.facility_to}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  Diagnosis: {referral.diagnosis || "N/A"}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-semibold">{referral.reason}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {referral.facility_from} → {referral.facility_to}
-                              </p>
+                            <div className="flex items-center gap-4">
+                              <Badge
+                                variant={referral.urgency === 'high' ? 'destructive' : referral.urgency === 'medium' ? 'default' : 'secondary'}
+                              >
+                                {referral.urgency}
+                              </Badge>
+                              <Badge
+                                variant={referral.status === 'completed' ? 'default' : referral.status === 'pending' ? 'outline' : 'secondary'}
+                              >
+                                {referral.status}
+                              </Badge>
                               <p className="text-xs text-muted-foreground">
-                                Diagnosis: {referral.diagnosis || "N/A"}
+                                {new Date(referral.created_at).toLocaleDateString()}
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
-                            <Badge 
-                              variant={referral.urgency === 'high' ? 'destructive' : referral.urgency === 'medium' ? 'default' : 'secondary'}
-                            >
-                              {referral.urgency}
-                            </Badge>
-                            <Badge 
-                              variant={referral.status === 'completed' ? 'default' : referral.status === 'pending' ? 'outline' : 'secondary'}
-                            >
-                              {referral.status}
-                            </Badge>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(referral.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </CardContent>
@@ -840,7 +965,92 @@ const AdminDashboard = () => {
                 {activeTab === "facilities-level-2" && "Level 2 - Dispensaries"}
                 {activeTab === "facilities-level-1" && "Level 1 - Community Units"}
               </h1>
-              
+
+              {activeTab === "facilities-all" && (
+                <div className="mb-6">
+                  <Dialog open={isAddFacilityOpen} onOpenChange={setIsAddFacilityOpen}>
+                    <DialogTrigger asChild>
+                      <Button className="gap-2">
+                        <Plus size={16} /> Add New Facility
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add New Facility</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label>Facility Name</Label>
+                          <Input
+                            placeholder="e.g. Nairobi Central Hospital"
+                            value={newFacility.name}
+                            onChange={(e) => setNewFacility({ ...newFacility, name: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Type</Label>
+                            <Select
+                              value={newFacility.type}
+                              onValueChange={(val) => setNewFacility({ ...newFacility, type: val })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select Type" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Hospital">Hospital</SelectItem>
+                                <SelectItem value="Clinic">Clinic</SelectItem>
+                                <SelectItem value="Dispensary">Dispensary</SelectItem>
+                                <SelectItem value="Medical Center">Medical Center</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Level</Label>
+                            <Select
+                              value={newFacility.level}
+                              onValueChange={(val) => setNewFacility({ ...newFacility, level: val })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select Level" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="6">Level 6</SelectItem>
+                                <SelectItem value="5">Level 5</SelectItem>
+                                <SelectItem value="4">Level 4</SelectItem>
+                                <SelectItem value="3">Level 3</SelectItem>
+                                <SelectItem value="2">Level 2</SelectItem>
+                                <SelectItem value="1">Level 1</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Address/Location</Label>
+                          <Input
+                            placeholder="e.g. Moi Avenue, Nairobi"
+                            value={newFacility.address}
+                            onChange={(e) => setNewFacility({ ...newFacility, address: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Contact Info</Label>
+                          <Input
+                            placeholder="e.g. +254 700 000000"
+                            value={newFacility.contact}
+                            onChange={(e) => setNewFacility({ ...newFacility, contact: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsAddFacilityOpen(false)}>Cancel</Button>
+                        <Button onClick={handleAddFacility}>Add Facility</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                 <Card>
                   <CardContent className="pt-6">
@@ -872,7 +1082,7 @@ const AdminDashboard = () => {
                       <div>
                         <p className="text-sm text-muted-foreground">Avg Rating</p>
                         <p className="text-3xl font-bold">
-                          {dbFacilities.length > 0 
+                          {dbFacilities.length > 0
                             ? (dbFacilities.reduce((acc, f) => acc + (f.rating || 0), 0) / dbFacilities.length).toFixed(1)
                             : "N/A"}
                         </p>
@@ -904,36 +1114,36 @@ const AdminDashboard = () => {
                           facility.address?.toLowerCase().includes(searchQuery.toLowerCase())
                         )
                         .map((facility) => (
-                        <div key={facility.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
-                              <Building2 className="text-primary" size={24} />
+                          <div key={facility.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
+                                <Building2 className="text-primary" size={24} />
+                              </div>
+                              <div>
+                                <p className="font-semibold">{facility.name}</p>
+                                <p className="text-sm text-muted-foreground">{facility.type}</p>
+                                <p className="text-xs text-muted-foreground">{facility.address}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-semibold">{facility.name}</p>
-                              <p className="text-sm text-muted-foreground">{facility.type}</p>
-                              <p className="text-xs text-muted-foreground">{facility.address}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-8">
-                            <div className="text-right">
-                              <Badge variant="outline">
-                                Level {facility.facility_levels?.level || "N/A"}
+                            <div className="flex items-center gap-8">
+                              <div className="text-right">
+                                <Badge variant="outline">
+                                  Level {facility.facility_levels?.level || "N/A"}
+                                </Badge>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {facility.facility_levels?.name || "Unknown"}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-lg font-semibold">{facility.rating || 0}</p>
+                                <p className="text-sm text-muted-foreground">Rating</p>
+                              </div>
+                              <Badge className={facility.status === "active" ? "bg-success" : "bg-muted"}>
+                                {facility.status}
                               </Badge>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {facility.facility_levels?.name || "Unknown"}
-                              </p>
                             </div>
-                            <div className="text-right">
-                              <p className="text-lg font-semibold">{facility.rating || 0}</p>
-                              <p className="text-sm text-muted-foreground">Rating</p>
-                            </div>
-                            <Badge className={facility.status === "active" ? "bg-success" : "bg-muted"}>
-                              {facility.status}
-                            </Badge>
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </CardContent>
@@ -944,7 +1154,7 @@ const AdminDashboard = () => {
           {activeTab === "providers" && (
             <div>
               <h1 className="text-3xl font-bold mb-6">Healthcare Providers</h1>
-              
+
               {loadingProviders ? (
                 <div className="flex justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -997,7 +1207,7 @@ const AdminDashboard = () => {
                       </CardContent>
                     </Card>
                   </div>
-                  
+
                   <Tabs defaultValue="doctors" className="space-y-6">
                     <TabsList>
                       <TabsTrigger value="doctors">Doctors</TabsTrigger>
@@ -1005,7 +1215,7 @@ const AdminDashboard = () => {
                       <TabsTrigger value="pharmacists">Pharmacists</TabsTrigger>
                       <TabsTrigger value="lab-technicians">Lab Technicians</TabsTrigger>
                     </TabsList>
-                    
+
                     <TabsContent value="doctors">
                       <Card>
                         <CardHeader>
@@ -1016,28 +1226,34 @@ const AdminDashboard = () => {
                             {providerCounts.doctors.length === 0 ? (
                               <p className="text-muted-foreground text-center py-4">No doctors registered yet</p>
                             ) : (
-                              providerCounts.doctors.map((doctor) => (
-                                <div key={doctor.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                                      <UserCircle className="text-primary" size={24} />
+                              providerCounts.doctors
+                                .filter(d =>
+                                  searchQuery === "" ||
+                                  d.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  d.email.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map((doctor) => (
+                                  <div key={doctor.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                                        <UserCircle className="text-primary" size={24} />
+                                      </div>
+                                      <div>
+                                        <p className="font-semibold">{doctor.full_name}</p>
+                                        <p className="text-sm text-muted-foreground">{doctor.email}</p>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="font-semibold">{doctor.full_name}</p>
-                                      <p className="text-sm text-muted-foreground">{doctor.email}</p>
-                                    </div>
+                                    <Badge className={doctor.status === 'active' ? 'bg-success/10 text-success' : ''}>
+                                      {doctor.status === 'active' ? 'Active' : doctor.status}
+                                    </Badge>
                                   </div>
-                                  <Badge className={doctor.status === 'active' ? 'bg-success/10 text-success' : ''}>
-                                    {doctor.status === 'active' ? 'Active' : doctor.status}
-                                  </Badge>
-                                </div>
-                              ))
+                                ))
                             )}
                           </div>
                         </CardContent>
                       </Card>
                     </TabsContent>
-                    
+
                     <TabsContent value="nurses">
                       <Card>
                         <CardHeader>
@@ -1048,22 +1264,28 @@ const AdminDashboard = () => {
                             {providerCounts.nurses.length === 0 ? (
                               <p className="text-muted-foreground text-center py-4">No nurses registered yet</p>
                             ) : (
-                              providerCounts.nurses.map((nurse) => (
-                                <div key={nurse.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                                      <UserCircle className="text-primary" size={24} />
+                              providerCounts.nurses
+                                .filter(n =>
+                                  searchQuery === "" ||
+                                  n.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  n.email.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map((nurse) => (
+                                  <div key={nurse.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                                        <UserCircle className="text-primary" size={24} />
+                                      </div>
+                                      <div>
+                                        <p className="font-semibold">{nurse.full_name}</p>
+                                        <p className="text-sm text-muted-foreground">{nurse.email}</p>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="font-semibold">{nurse.full_name}</p>
-                                      <p className="text-sm text-muted-foreground">{nurse.email}</p>
-                                    </div>
+                                    <Badge className={nurse.status === 'active' ? 'bg-success/10 text-success' : ''}>
+                                      {nurse.status === 'active' ? 'Active' : nurse.status}
+                                    </Badge>
                                   </div>
-                                  <Badge className={nurse.status === 'active' ? 'bg-success/10 text-success' : ''}>
-                                    {nurse.status === 'active' ? 'Active' : nurse.status}
-                                  </Badge>
-                                </div>
-                              ))
+                                ))
                             )}
                           </div>
                         </CardContent>
@@ -1080,22 +1302,28 @@ const AdminDashboard = () => {
                             {providerCounts.pharmacists.length === 0 ? (
                               <p className="text-muted-foreground text-center py-4">No pharmacists registered yet</p>
                             ) : (
-                              providerCounts.pharmacists.map((pharmacist) => (
-                                <div key={pharmacist.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                                      <UserCircle className="text-primary" size={24} />
+                              providerCounts.pharmacists
+                                .filter(p =>
+                                  searchQuery === "" ||
+                                  p.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  p.email.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map((pharmacist) => (
+                                  <div key={pharmacist.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                                        <UserCircle className="text-primary" size={24} />
+                                      </div>
+                                      <div>
+                                        <p className="font-semibold">{pharmacist.full_name}</p>
+                                        <p className="text-sm text-muted-foreground">{pharmacist.email}</p>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="font-semibold">{pharmacist.full_name}</p>
-                                      <p className="text-sm text-muted-foreground">{pharmacist.email}</p>
-                                    </div>
+                                    <Badge className={pharmacist.status === 'active' ? 'bg-success/10 text-success' : ''}>
+                                      {pharmacist.status === 'active' ? 'Active' : pharmacist.status}
+                                    </Badge>
                                   </div>
-                                  <Badge className={pharmacist.status === 'active' ? 'bg-success/10 text-success' : ''}>
-                                    {pharmacist.status === 'active' ? 'Active' : pharmacist.status}
-                                  </Badge>
-                                </div>
-                              ))
+                                ))
                             )}
                           </div>
                         </CardContent>
@@ -1112,22 +1340,28 @@ const AdminDashboard = () => {
                             {providerCounts.labTechnicians.length === 0 ? (
                               <p className="text-muted-foreground text-center py-4">No lab technicians registered yet</p>
                             ) : (
-                              providerCounts.labTechnicians.map((labTech) => (
-                                <div key={labTech.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                                      <UserCircle className="text-primary" size={24} />
+                              providerCounts.labTechnicians
+                                .filter(l =>
+                                  searchQuery === "" ||
+                                  l.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  l.email.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map((labTech) => (
+                                  <div key={labTech.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                                        <UserCircle className="text-primary" size={24} />
+                                      </div>
+                                      <div>
+                                        <p className="font-semibold">{labTech.full_name}</p>
+                                        <p className="text-sm text-muted-foreground">{labTech.email}</p>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="font-semibold">{labTech.full_name}</p>
-                                      <p className="text-sm text-muted-foreground">{labTech.email}</p>
-                                    </div>
+                                    <Badge className={labTech.status === 'active' ? 'bg-success/10 text-success' : ''}>
+                                      {labTech.status === 'active' ? 'Active' : labTech.status}
+                                    </Badge>
                                   </div>
-                                  <Badge className={labTech.status === 'active' ? 'bg-success/10 text-success' : ''}>
-                                    {labTech.status === 'active' ? 'Active' : labTech.status}
-                                  </Badge>
-                                </div>
-                              ))
+                                ))
                             )}
                           </div>
                         </CardContent>
@@ -1148,7 +1382,7 @@ const AdminDashboard = () => {
                 {activeTab === "users-pharmacists" && "Pharmacist Management"}
                 {activeTab === "users-lab-technicians" && "Lab Technician Management"}
               </h1>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
                 <Card>
                   <CardContent className="pt-6">
@@ -1158,11 +1392,11 @@ const AdminDashboard = () => {
                           Total {activeTab === "users-doctors" ? "Doctors" : activeTab === "users-nurses" ? "Nurses" : activeTab === "users-patients" ? "Patients" : activeTab === "users-pharmacists" ? "Pharmacists" : "Lab Technicians"}
                         </p>
                         <p className="text-3xl font-bold">
-                          {activeTab === "users-doctors" ? roleCountStats.doctors.total : 
-                           activeTab === "users-nurses" ? roleCountStats.nurses.total : 
-                           activeTab === "users-patients" ? roleCountStats.patients.total : 
-                           activeTab === "users-pharmacists" ? roleCountStats.pharmacists.total : 
-                           roleCountStats.labTechnicians.total}
+                          {activeTab === "users-doctors" ? roleCountStats.doctors.total :
+                            activeTab === "users-nurses" ? roleCountStats.nurses.total :
+                              activeTab === "users-patients" ? roleCountStats.patients.total :
+                                activeTab === "users-pharmacists" ? roleCountStats.pharmacists.total :
+                                  roleCountStats.labTechnicians.total}
                         </p>
                       </div>
                       <Users className="h-8 w-8 text-primary" />
@@ -1175,11 +1409,11 @@ const AdminDashboard = () => {
                       <div>
                         <p className="text-sm text-muted-foreground">Active</p>
                         <p className="text-3xl font-bold text-success">
-                          {activeTab === "users-doctors" ? roleCountStats.doctors.active : 
-                           activeTab === "users-nurses" ? roleCountStats.nurses.active : 
-                           activeTab === "users-patients" ? roleCountStats.patients.active : 
-                           activeTab === "users-pharmacists" ? roleCountStats.pharmacists.active : 
-                           roleCountStats.labTechnicians.active}
+                          {activeTab === "users-doctors" ? roleCountStats.doctors.active :
+                            activeTab === "users-nurses" ? roleCountStats.nurses.active :
+                              activeTab === "users-patients" ? roleCountStats.patients.active :
+                                activeTab === "users-pharmacists" ? roleCountStats.pharmacists.active :
+                                  roleCountStats.labTechnicians.active}
                         </p>
                       </div>
                       <CheckCircle className="h-8 w-8 text-success" />
@@ -1253,18 +1487,25 @@ const AdminDashboard = () => {
                         {activeTab === "users-doctors" && (
                           <>
                             {providerCounts.doctors.length === 0 ? (
-                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No doctors found</td></tr>
+                              <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No doctors found</td></tr>
                             ) : (
-                                providerCounts.doctors.map(user => (
-                                    <UserRow
-                                      key={user.id}
-                                      name={user.full_name}
-                                      email={user.email}
-                                      role="Doctor"
-                                      facility={user.facility_name || "Unassigned"}
-                                      status={user.status}
-                                      lastActive="Recently" 
-                                    />
+                              providerCounts.doctors
+                                .filter(d =>
+                                  searchQuery === "" ||
+                                  d.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  d.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  d.facility_name?.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map(user => (
+                                  <UserRow
+                                    key={user.id}
+                                    name={user.full_name}
+                                    email={user.email}
+                                    role="Doctor"
+                                    facility={user.facility_name || "Unassigned"}
+                                    status={user.status}
+                                    lastActive="Recently"
+                                  />
                                 ))
                             )}
                           </>
@@ -1272,18 +1513,25 @@ const AdminDashboard = () => {
                         {activeTab === "users-nurses" && (
                           <>
                             {providerCounts.nurses.length === 0 ? (
-                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No nurses found</td></tr>
+                              <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No nurses found</td></tr>
                             ) : (
-                                providerCounts.nurses.map(user => (
-                                    <UserRow
-                                      key={user.id}
-                                      name={user.full_name}
-                                      email={user.email}
-                                      role="Nurse"
-                                      facility={user.facility_name || "Unassigned"}
-                                      status={user.status}
-                                      lastActive="Recently"
-                                    />
+                              providerCounts.nurses
+                                .filter(n =>
+                                  searchQuery === "" ||
+                                  n.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  n.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  n.facility_name?.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map(user => (
+                                  <UserRow
+                                    key={user.id}
+                                    name={user.full_name}
+                                    email={user.email}
+                                    role="Nurse"
+                                    facility={user.facility_name || "Unassigned"}
+                                    status={user.status}
+                                    lastActive="Recently"
+                                  />
                                 ))
                             )}
                           </>
@@ -1291,18 +1539,24 @@ const AdminDashboard = () => {
                         {activeTab === "users-patients" && (
                           <>
                             {patients.length === 0 ? (
-                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No patients found</td></tr>
+                              <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No patients found</td></tr>
                             ) : (
-                                patients.map(patient => (
-                                    <UserRow
-                                      key={patient.id}
-                                      name={patient.full_name}
-                                      email={patient.email}
-                                      role="Patient"
-                                      facility="N/A"
-                                      status={patient.status}
-                                      lastActive="Recently"
-                                    />
+                              patients
+                                .filter(p =>
+                                  searchQuery === "" ||
+                                  p.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  p.email?.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map(patient => (
+                                  <UserRow
+                                    key={patient.id}
+                                    name={patient.full_name}
+                                    email={patient.email}
+                                    role="Patient"
+                                    facility="N/A"
+                                    status={patient.status}
+                                    lastActive="Recently"
+                                  />
                                 ))
                             )}
                           </>
@@ -1310,18 +1564,25 @@ const AdminDashboard = () => {
                         {activeTab === "users-pharmacists" && (
                           <>
                             {providerCounts.pharmacists.length === 0 ? (
-                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No pharmacists found</td></tr>
+                              <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No pharmacists found</td></tr>
                             ) : (
-                                providerCounts.pharmacists.map(user => (
-                                    <UserRow
-                                      key={user.id}
-                                      name={user.full_name}
-                                      email={user.email}
-                                      role="Pharmacist"
-                                      facility={user.facility_name || "Unassigned"}
-                                      status={user.status}
-                                      lastActive="Recently"
-                                    />
+                              providerCounts.pharmacists
+                                .filter(p =>
+                                  searchQuery === "" ||
+                                  p.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  p.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  p.facility_name?.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map(user => (
+                                  <UserRow
+                                    key={user.id}
+                                    name={user.full_name}
+                                    email={user.email}
+                                    role="Pharmacist"
+                                    facility={user.facility_name || "Unassigned"}
+                                    status={user.status}
+                                    lastActive="Recently"
+                                  />
                                 ))
                             )}
                           </>
@@ -1329,18 +1590,25 @@ const AdminDashboard = () => {
                         {activeTab === "users-lab-technicians" && (
                           <>
                             {providerCounts.labTechnicians.length === 0 ? (
-                               <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No lab technicians found</td></tr>
+                              <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No lab technicians found</td></tr>
                             ) : (
-                                providerCounts.labTechnicians.map(user => (
-                                    <UserRow
-                                      key={user.id}
-                                      name={user.full_name}
-                                      email={user.email}
-                                      role="Lab Technician"
-                                      facility={user.facility_name || "Unassigned"}
-                                      status={user.status}
-                                      lastActive="Recently"
-                                    />
+                              providerCounts.labTechnicians
+                                .filter(l =>
+                                  searchQuery === "" ||
+                                  l.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  l.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  l.facility_name?.toLowerCase().includes(searchQuery.toLowerCase())
+                                )
+                                .map(user => (
+                                  <UserRow
+                                    key={user.id}
+                                    name={user.full_name}
+                                    email={user.email}
+                                    role="Lab Technician"
+                                    facility={user.facility_name || "Unassigned"}
+                                    status={user.status}
+                                    lastActive="Recently"
+                                  />
                                 ))
                             )}
                           </>
@@ -1356,7 +1624,7 @@ const AdminDashboard = () => {
           {activeTab === "pending-users" && (
             <>
               <h1 className="text-3xl font-bold mb-6">Pending User Approvals</h1>
-              
+
               <Card className="mb-6">
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
@@ -1387,91 +1655,89 @@ const AdminDashboard = () => {
                   ) : (
                     <div className="space-y-4">
                       {pendingUsers
-                        .filter(user => 
-                          searchQuery === "" || 
-                          user.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          user.email.toLowerCase().includes(searchQuery.toLowerCase())
+                        .filter(user =>
+                          searchQuery === "" ||
+                          user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          user.email?.toLowerCase().includes(searchQuery.toLowerCase())
                         )
                         .map((user) => (
-                          <div key={user.id} className={`flex items-center justify-between p-4 rounded-lg border ${
-                            activatedUsers.has(user.id) 
-                              ? 'bg-success/10 border-success/30' 
-                              : 'bg-muted/30 border-warning/20'
-                          }`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                              activatedUsers.has(user.id) 
-                                ? 'bg-success/20' 
-                                : 'bg-warning/10'
+                          <div key={user.id} className={`flex items-center justify-between p-4 rounded-lg border ${activatedUsers.has(user.id)
+                            ? 'bg-success/10 border-success/30'
+                            : 'bg-muted/30 border-warning/20'
                             }`}>
-                              {activatedUsers.has(user.id) ? (
-                                <CheckCircle className="text-success" size={24} />
-                              ) : (
-                                <Clock className="text-warning" size={24} />
-                              )}
-                            </div>
-                            <div>
-                              <p className="font-semibold">{user.full_name}</p>
-                              <p className="text-sm text-muted-foreground">{user.email}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                {user.roles.length > 0 ? (
-                                  user.roles.map((role, i) => (
-                                    <Badge key={i} variant="outline" className="capitalize">
-                                      {role.replace('_', ' ')}
-                                    </Badge>
-                                  ))
-                                ) : !activatedUsers.has(user.id) && (
-                                  <Select
-                                    value={selectedRoles[user.id] || ""}
-                                    onValueChange={(value) => setSelectedRoles(prev => ({ ...prev, [user.id]: value }))}
-                                  >
-                                    <SelectTrigger className="w-40 h-8">
-                                      <SelectValue placeholder="Select role" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="doctor">Doctor</SelectItem>
-                                      <SelectItem value="nurse">Nurse</SelectItem>
-                                      <SelectItem value="patient">Patient</SelectItem>
-                                      <SelectItem value="pharmacist">Pharmacist</SelectItem>
-                                      <SelectItem value="lab_technician">Lab Technician</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                            <div className="flex items-center gap-4">
+                              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${activatedUsers.has(user.id)
+                                ? 'bg-success/20'
+                                : 'bg-warning/10'
+                                }`}>
+                                {activatedUsers.has(user.id) ? (
+                                  <CheckCircle className="text-success" size={24} />
+                                ) : (
+                                  <Clock className="text-warning" size={24} />
                                 )}
                               </div>
+                              <div>
+                                <p className="font-semibold">{user.full_name}</p>
+                                <p className="text-sm text-muted-foreground">{user.email}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  {user.roles.length > 0 ? (
+                                    user.roles.map((role, i) => (
+                                      <Badge key={i} variant="outline" className="capitalize">
+                                        {role.replace('_', ' ')}
+                                      </Badge>
+                                    ))
+                                  ) : !activatedUsers.has(user.id) && (
+                                    <Select
+                                      value={selectedRoles[user.id] || ""}
+                                      onValueChange={(value) => setSelectedRoles(prev => ({ ...prev, [user.id]: value }))}
+                                    >
+                                      <SelectTrigger className="w-40 h-8">
+                                        <SelectValue placeholder="Select role" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="doctor">Doctor</SelectItem>
+                                        <SelectItem value="nurse">Nurse</SelectItem>
+                                        <SelectItem value="patient">Patient</SelectItem>
+                                        <SelectItem value="pharmacist">Pharmacist</SelectItem>
+                                        <SelectItem value="lab_technician">Lab Technician</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="text-right text-sm text-muted-foreground">
+                                <p>Registered</p>
+                                <p>{new Date(user.created_at).toLocaleDateString()}</p>
+                              </div>
+                              {activatedUsers.has(user.id) ? (
+                                <Badge className="bg-success text-success-foreground gap-1 py-2 px-4">
+                                  <CheckCircle size={16} />
+                                  Activated
+                                </Badge>
+                              ) : (
+                                <Button
+                                  onClick={() => handleActivateUser(user.id)}
+                                  className="gap-2"
+                                  disabled={activatingUsers.has(user.id)}
+                                >
+                                  {activatingUsers.has(user.id) ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+                                      Activating...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <UserCheck size={18} />
+                                      Activate
+                                    </>
+                                  )}
+                                </Button>
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
-                            <div className="text-right text-sm text-muted-foreground">
-                              <p>Registered</p>
-                              <p>{new Date(user.created_at).toLocaleDateString()}</p>
-                            </div>
-                            {activatedUsers.has(user.id) ? (
-                              <Badge className="bg-success text-success-foreground gap-1 py-2 px-4">
-                                <CheckCircle size={16} />
-                                Activated
-                              </Badge>
-                            ) : (
-                              <Button
-                                onClick={() => handleActivateUser(user.id)}
-                                className="gap-2"
-                                disabled={activatingUsers.has(user.id)}
-                              >
-                                {activatingUsers.has(user.id) ? (
-                                  <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                                    Activating...
-                                  </>
-                                ) : (
-                                  <>
-                                    <UserCheck size={18} />
-                                    Activate
-                                  </>
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </CardContent>
@@ -1482,7 +1748,7 @@ const AdminDashboard = () => {
           {activeTab === "codes" && (
             <>
               <h1 className="text-3xl font-bold mb-6">Registration Codes</h1>
-              
+
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 mb-8">
                 <Card>
                   <CardContent className="pt-6">
@@ -1579,7 +1845,7 @@ const AdminDashboard = () => {
           {activeTab === "analytics" && (
             <div>
               <h1 className="text-3xl font-bold mb-6">Analytics & Reports</h1>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <Card>
                   <CardHeader>
@@ -1681,7 +1947,7 @@ const AdminDashboard = () => {
           {activeTab === "security" && (
             <div>
               <h1 className="text-3xl font-bold mb-6">Security & Audit</h1>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                 <Card>
                   <CardContent className="pt-6">
@@ -1731,11 +1997,10 @@ const AdminDashboard = () => {
                     ].map((log, i) => (
                       <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                         <div className="flex items-center gap-3">
-                          <div className={`w-2 h-2 rounded-full ${
-                            log.type === "success" ? "bg-success" :
+                          <div className={`w-2 h-2 rounded-full ${log.type === "success" ? "bg-success" :
                             log.type === "warning" ? "bg-warning" :
-                            "bg-primary"
-                          }`}></div>
+                              "bg-primary"
+                            }`}></div>
                           <div>
                             <p className="font-semibold text-sm">{log.action}</p>
                             <p className="text-xs text-muted-foreground">{log.user}</p>
@@ -1777,7 +2042,7 @@ const AdminDashboard = () => {
           {activeTab === "notifications" && (
             <div>
               <h1 className="text-3xl font-bold mb-6">Notifications Management</h1>
-              
+
               <Card className="mb-6">
                 <CardHeader>
                   <CardTitle>Send Notification</CardTitle>
@@ -1865,6 +2130,16 @@ const AdminDashboard = () => {
                 </CardContent>
               </Card>
             </div>
+          )}
+          {activeTab === "settings" && (
+            <div>
+              <h1 className="text-3xl font-bold mb-6">Platform Settings</h1>
+              <AdminSettings />
+            </div>
+          )}
+
+          {activeTab === "reports" && (
+            <AdminReports />
           )}
         </div>
       </main>
