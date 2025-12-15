@@ -22,6 +22,17 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Helper to log audit events
+const logAudit = (userId, action, details, type = 'info') => {
+  try {
+    db.prepare('INSERT INTO audit_logs (id, user_id, action, details, type) VALUES (?, ?, ?, ?, ?)').run(
+      randomUUID(), userId, action, details, type
+    );
+  } catch (error) {
+    console.error('Audit log error:', error);
+  }
+};
+
 router.post('/signup', async (req, res) => {
   const { email, password, full_name, role_code } = req.body;
 
@@ -44,16 +55,12 @@ router.post('/signup', async (req, res) => {
       // Explicitly set status to 'pending'
       db.prepare('INSERT INTO profiles (id, email, full_name, status) VALUES (?, ?, ?, ?)').run(userId, email, full_name, 'pending');
       
-      // Assign role based on registration code if provided.
-      // If NO code is provided, we do NOT assign a default role. 
-      // This allows the Admin to assign a role upon approval/activation.
       if (role_code) {
          let role = null;
          if (role_code.includes('ADMIN')) role = 'admin';
          else if (role_code.includes('DOCTOR')) role = 'doctor';
          else if (role_code.includes('NURSE')) role = 'nurse';
          else if (role_code.includes('PATIENT')) role = 'patient';
-         // Add other roles as needed
          
          if (role) {
             db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(randomUUID(), userId, role);
@@ -62,16 +69,9 @@ router.post('/signup', async (req, res) => {
     });
 
     createUser();
+    logAudit(userId, 'USER_SIGNUP', `User ${email} registered`, 'info');
 
     const token = jwt.sign({ id: userId, email }, SECRET_KEY, { expiresIn: '24h' });
-    
-    // Note: We return the token/user here, but since they are pending, frontend should probably
-    // prevent auto-login or show "Pending" state if we allowed login. 
-    // BUT user said "cannot login". 
-    // So actually, for /signup, we might NOT want to return a token, or return it but 
-    // the verify middleware will block them? No, verify checks signature.
-    // Efficiently, we should just return success message, NO token.
-    // let's change behavior: On signup, don't auto-login if pending.
     
     res.json({ message: 'Account created. Please wait for admin approval.', user: { id: userId, email, full_name } }); 
   } catch (error) {
@@ -86,11 +86,13 @@ router.post('/login', async (req, res) => {
   try {
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     if (!user) {
+      logAudit(null, 'LOGIN_FAILED', `Failed login attempt for ${email} (User not found)`, 'warning');
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
+      logAudit(user.id, 'LOGIN_FAILED', `Failed login attempt for ${email} (Invalid password)`, 'warning');
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
@@ -98,10 +100,13 @@ router.post('/login', async (req, res) => {
     
     // Check status
     if (profile.status !== 'active') {
+       logAudit(user.id, 'LOGIN_FAILED', `Login attempted for inactive account ${email}`, 'warning');
        return res.status(403).json({ error: 'Account pending approval. Please contact administrator.' });
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '24h' });
+    
+    logAudit(user.id, 'LOGIN_SUCCESS', `User ${email} logged in successfully`, 'success');
 
     res.cookie('token', token, { httpOnly: true, secure: false });
     res.json({ user: { ...profile, email: user.email }, token });
@@ -112,6 +117,20 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
+  // If we have user info from middleware (though logout might be called without auth sometimes, or token expired)
+  // We don't have middleware here in the original code, checking index.js usage might clarify but standard is clearCookie
+  // We can't easily log *who* logged out unless we require auth for logout or decode the cookie first.
+  // For now, simpler to just clear.
+  
+  // Attempt to decode for logging if token exists
+  const token = req.cookies.token || req.headers['authorization']?.split(' ')[1];
+  if (token) {
+      try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        logAudit(decoded.id, 'LOGOUT', `User ${decoded.email} logged out`, 'info');
+      } catch(e) {}
+  }
+
   res.clearCookie('token');
   res.json({ message: 'Logged out successfully' });
 });

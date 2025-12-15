@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { dataApi } from "@/lib/api";
 import DashboardLayout from "./DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,11 +7,23 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, FileText } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArrowDownLeft, ArrowUpRight, Plus, FileText, Check, X, AlertCircle } from "lucide-react";
+import { authApi, dataApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog";
 
 const DoctorDashboard = () => {
   const { toast } = useToast();
+  const [user, setUser] = useState<any>(null);
   const [referrals, setReferrals] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [newReferral, setNewReferral] = useState({
@@ -21,12 +32,23 @@ const DoctorDashboard = () => {
     facilityTo: "",
     reason: "",
     diagnosis: "",
+    notes: "",
     urgency: "medium",
   });
 
   useEffect(() => {
+    fetchUser();
     fetchReferrals();
   }, []);
+
+  const fetchUser = async () => {
+    try {
+      const { data } = await authApi.me();
+      setUser(data.user);
+    } catch (error) {
+       console.error("Error fetching user:", error);
+    }
+  };
 
   const fetchReferrals = async () => {
     try {
@@ -46,6 +68,7 @@ const DoctorDashboard = () => {
         facility_to: newReferral.facilityTo,
         reason: newReferral.reason,
         diagnosis: newReferral.diagnosis,
+        notes: newReferral.notes,
         urgency: newReferral.urgency,
       });
 
@@ -57,6 +80,7 @@ const DoctorDashboard = () => {
         facilityTo: "",
         reason: "",
         diagnosis: "",
+        notes: "",
         urgency: "medium",
       });
       fetchReferrals();
@@ -67,6 +91,17 @@ const DoctorDashboard = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const handleUpdateStatus = async (id: string, status: string, rejectionReason?: string) => {
+      try {
+          await dataApi.updateReferral(id, { status, rejection_reason: rejectionReason });
+          toast({ title: `Referral ${status === 'accepted' ? 'accepted' : 'rejected'}` });
+          fetchReferrals();
+      } catch (error) {
+          console.error("Failed to update status", error);
+          toast({ title: "Failed to update status", variant: "destructive" });
+      }
   };
 
   const getUrgencyColor = (urgency: string) => {
@@ -197,6 +232,16 @@ const DoctorDashboard = () => {
                   id="diagnosis"
                   value={newReferral.diagnosis}
                   onChange={(e) => setNewReferral({ ...newReferral, diagnosis: e.target.value })}
+                  placeholder="Primary diagnosis..."
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="notes">Clinical Notes</Label>
+                <Textarea
+                  id="notes"
+                  value={newReferral.notes}
+                  onChange={(e) => setNewReferral({ ...newReferral, notes: e.target.value })}
+                  placeholder="Additional clinical notes..."
                 />
               </div>
               <Button type="submit">Create Referral</Button>
@@ -206,57 +251,194 @@ const DoctorDashboard = () => {
       )}
 
       <div className="space-y-4">
-        <h3 className="text-xl font-semibold">Your Referrals</h3>
-        {referrals.length === 0 ? (
-          <Card>
-            <CardContent className="pt-6 text-center text-muted-foreground">
-              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No referrals yet. Create your first referral to get started.</p>
-            </CardContent>
-          </Card>
-        ) : (
-          referrals.map((referral) => (
-            <Card key={referral.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">
-                    {referral.patient?.full_name || "Unknown Patient"}
-                  </CardTitle>
-                  <div className="flex gap-2">
-                    <Badge className={getUrgencyColor(referral.urgency)}>
-                      {referral.urgency}
-                    </Badge>
-                    <Badge variant="outline">{referral.status}</Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-2 text-sm">
-                  <div>
-                    <span className="font-semibold">From:</span> {referral.facility_from}
-                  </div>
-                  <div>
-                    <span className="font-semibold">To:</span> {referral.facility_to}
-                  </div>
-                  <div>
-                    <span className="font-semibold">Reason:</span> {referral.reason}
-                  </div>
-                  {referral.diagnosis && (
-                    <div>
-                      <span className="font-semibold">Diagnosis:</span> {referral.diagnosis}
-                    </div>
-                  )}
-                  <div className="text-muted-foreground">
-                    Created: {new Date(referral.created_at).toLocaleDateString()}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+        <Tabs defaultValue="outgoing" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="incoming">
+               <ArrowDownLeft className="mr-2 h-4 w-4" />
+               Incoming Referrals
+            </TabsTrigger>
+            <TabsTrigger value="outgoing">
+               <ArrowUpRight className="mr-2 h-4 w-4" />
+               Outgoing Referrals
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="outgoing" className="space-y-4 mt-4">
+            <h3 className="text-xl font-semibold">Outgoing Referrals</h3>
+            {referrals.filter(r => r.referring_doctor_id === user?.id).length === 0 ? (
+              <Card>
+                <CardContent className="pt-6 text-center text-muted-foreground">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>You haven't sent any referrals yet.</p>
+                </CardContent>
+              </Card>
+            ) : (
+                referrals.filter(r => r.referring_doctor_id === user?.id).map((referral) => (
+                <ReferralCard key={referral.id} referral={referral} type="outgoing" />
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="incoming" className="space-y-4 mt-4">
+            <h3 className="text-xl font-semibold">Incoming Referrals</h3>
+            {referrals.filter(r => r.referring_doctor_id !== user?.id).length === 0 ? (
+              <Card>
+                <CardContent className="pt-6 text-center text-muted-foreground">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No incoming referrals assigned to you.</p>
+                </CardContent>
+              </Card>
+            ) : (
+                referrals.filter(r => r.referring_doctor_id !== user?.id).map((referral) => (
+                <ReferralCard key={referral.id} referral={referral} type="incoming" onUpdateStatus={handleUpdateStatus} />
+              ))
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );
+};
+
+const ReferralCard = ({ referral, type, onUpdateStatus }: { referral: any, type: 'incoming' | 'outgoing', onUpdateStatus?: (id: string, status: string, reason?: string) => void }) => {
+    const [isRejectOpen, setIsRejectOpen] = useState(false);
+    const [rejectionReason, setRejectionReason] = useState("");
+
+    const getUrgencyColor = (urgency: string) => {
+        switch (urgency) {
+            case "critical": return "bg-destructive text-destructive-foreground";
+            case "high": return "bg-warning text-warning-foreground";
+            case "medium": return "bg-secondary text-secondary-foreground";
+            case "low": return "bg-success text-success-foreground";
+            default: return "bg-muted text-muted-foreground";
+        }
+    };
+
+    const handleRejectSubmit = () => {
+        if (!rejectionReason.trim()) return;
+        if (onUpdateStatus) {
+            onUpdateStatus(referral.id, 'rejected', rejectionReason);
+            setIsRejectOpen(false);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">
+                        {referral.patient?.full_name || "Unknown Patient"}
+                    </CardTitle>
+                    <div className="flex gap-2 items-center">
+                        <Badge variant="outline" className="capitalize">{type}</Badge>
+                        <Badge className={getUrgencyColor(referral.urgency)}>
+                            {referral.urgency}
+                        </Badge>
+                        <Badge variant={referral.status === 'rejected' ? "destructive" : "secondary"}>
+                            {referral.status.replace("_", " ")}
+                        </Badge>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent>
+                <div className="grid gap-3 text-sm">
+                    <div className="grid grid-cols-2 gap-2 p-2 bg-muted/20 rounded">
+                        <div>
+                            <span className="font-semibold text-muted-foreground">From:</span>
+                            <div className="font-medium">{referral.facility_from}</div>
+                             {type === 'incoming' && (
+                                <div className="text-xs text-muted-foreground">Dr. {referral.referring_doctor?.full_name}</div>
+                             )}
+                        </div>
+                        <div>
+                            <span className="font-semibold text-muted-foreground">To:</span>
+                            <div className="font-medium">{referral.facility_to}</div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <span className="font-semibold block mb-1">Reason for Referral:</span>
+                        <div className="p-2 bg-muted/10 rounded border border-dashed border-muted-foreground/20">
+                           {referral.reason}
+                        </div>
+                    </div>
+
+                    {(referral.diagnosis || referral.notes) && (
+                        <div className="grid gap-2">
+                             {referral.diagnosis && (
+                                <div>
+                                    <span className="font-semibold">Diagnosis:</span>
+                                    <p className="text-muted-foreground">{referral.diagnosis}</p>
+                                </div>
+                             )}
+                             {referral.notes && (
+                                <div>
+                                    <span className="font-semibold">Clinical Notes:</span>
+                                    <p className="text-muted-foreground italic">"{referral.notes}"</p>
+                                </div>
+                             )}
+                        </div>
+                    )}
+
+                    {referral.status === 'rejected' && referral.rejection_reason && (
+                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive">
+                             <div className="flex items-center gap-2 font-semibold mb-1">
+                                <AlertCircle size={16} />
+                                Rejection Reason:
+                             </div>
+                             <p>{referral.rejection_reason}</p>
+                        </div>
+                    )}
+                    
+                    <div className="text-xs text-muted-foreground pt-2 border-t mt-2 flex justify-between items-center">
+                         <span>Created: {new Date(referral.created_at).toLocaleDateString()}</span>
+                         
+                         {type === 'incoming' && referral.status === 'pending' && onUpdateStatus && (
+                             <div className="flex gap-2">
+                                 <Dialog open={isRejectOpen} onOpenChange={setIsRejectOpen}>
+                                     <DialogTrigger asChild>
+                                        <Button variant="destructive" size="sm" className="h-8">
+                                            <X className="w-4 h-4 mr-1" /> Reject
+                                        </Button>
+                                     </DialogTrigger>
+                                     <DialogContent>
+                                         <DialogHeader>
+                                             <DialogTitle>Reject Referral</DialogTitle>
+                                             <DialogDescription>
+                                                 Please provide a reason for rejecting this referral. This will be sent to the referring doctor.
+                                             </DialogDescription>
+                                         </DialogHeader>
+                                         <div className="py-4">
+                                             <Label htmlFor="reject-reason" className="mb-2 block">Reason</Label>
+                                             <Textarea 
+                                                id="reject-reason" 
+                                                placeholder="E.g., Specialist unavailable, Wrong facility..."
+                                                value={rejectionReason}
+                                                onChange={(e) => setRejectionReason(e.target.value)}
+                                             />
+                                         </div>
+                                         <DialogFooter>
+                                             <Button variant="outline" onClick={() => setIsRejectOpen(false)}>Cancel</Button>
+                                             <Button variant="destructive" onClick={handleRejectSubmit}>Confirm Rejection</Button>
+                                         </DialogFooter>
+                                     </DialogContent>
+                                 </Dialog>
+
+                                 <Button 
+                                    variant="default" 
+                                    size="sm" 
+                                    className="h-8 bg-success hover:bg-success/90"
+                                    onClick={() => onUpdateStatus(referral.id, 'accepted')}
+                                 >
+                                     <Check className="w-4 h-4 mr-1" /> Accept
+                                 </Button>
+                             </div>
+                         )}
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
 };
 
 export default DoctorDashboard;

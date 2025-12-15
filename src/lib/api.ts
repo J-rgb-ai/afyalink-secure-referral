@@ -39,6 +39,7 @@ export const dataApi = {
   markNotificationRead: (id: string) => api.put(`/notifications/${id}/read`),
   markAllNotificationsRead: () => api.put('/notifications/read-all'),
   // Admin
+  getSecurityStats: () => api.get('/admin/security-stats'),
   getAdminStats: () => api.get('/admin/stats'),
   getPendingUsers: () => api.get('/admin/users/pending'),
   getHealthcareProviders: () => api.get('/admin/users/providers'),
@@ -50,6 +51,9 @@ export const dataApi = {
   sendNotification: (data: any) => api.post('/notifications', data),
   getFaqs: () => api.get('/faqs'),
   submitFeedback: (data: any) => api.post('/feedback', data),
+  // Consent
+  getConsents: () => api.get('/consents'),
+  updateConsent: (data: any) => api.post('/consents', data),
 };
 
 export default api;

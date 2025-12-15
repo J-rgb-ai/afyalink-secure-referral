@@ -139,7 +139,7 @@ const Auth = () => {
       const response = await authApi.signup({
         email: validated.email,
         password: validated.password,
-        password: validated.password,
+
         full_name: validated.fullName,
         role_code: validated.registrationCode,
       });

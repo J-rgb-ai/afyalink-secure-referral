@@ -142,6 +142,19 @@ function initSchema() {
       password_hash TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS consents (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL, -- 'doctor', 'facility'
+      entity_id TEXT, -- specific ID
+      entity_name TEXT, -- cache name for display
+      access_level TEXT DEFAULT 'read',
+      status TEXT DEFAULT 'granted', -- 'granted', 'revoked'
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (patient_id) REFERENCES profiles(id)
+    );
   `);
   
   console.log('Database schema initialized.');

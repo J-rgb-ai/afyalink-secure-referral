@@ -4,8 +4,48 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FileDown, FileText, PieChart, ShieldAlert, Users } from "lucide-react";
 import jsPDF from "jspdf";
 
-const AdminReports = () => {
+interface AdminReportsProps {
+    stats: any;
+    providers: any[];
+    patients: any[];
+    facilities: any[];
+    referrals: any[];
+}
+
+const AdminReports = ({ stats, providers, patients, facilities, referrals }: AdminReportsProps) => {
     const [generating, setGenerating] = useState(false);
+
+    // Calculate dynamic stats
+    const userStats = {
+        total: (patients?.length || 0) + (providers?.length || 0),
+        active: (patients?.filter(p => p.status === 'active').length || 0) + (providers?.filter(p => p.status === 'active').length || 0),
+        suspended: (patients?.filter(p => p.status === 'suspended').length || 0) + (providers?.filter(p => p.status === 'suspended').length || 0),
+        pending: stats?.pendingUsers || 0
+    };
+
+    const providerStats = {
+        total: providers?.length || 0,
+        doctors: providers?.filter(p => p.role === 'doctor').length || 0,
+        nurses: providers?.filter(p => p.role === 'nurse').length || 0,
+        others: providers?.filter(p => !['doctor', 'nurse'].includes(p.role)).length || 0
+    };
+
+    const facilityStats = {
+        total: facilities?.length || 0,
+        active: facilities?.filter(f => f.status === 'active').length || 0,
+        levels: facilities?.reduce((acc: any, curr: any) => {
+            const level = curr.facility_levels?.level || 'Unknown';
+            acc[level] = (acc[level] || 0) + 1;
+            return acc;
+        }, {})
+    };
+
+    const referralStats = {
+        total: referrals?.length || 0,
+        completed: referrals?.filter(r => r.status === 'completed').length || 0,
+        pending: referrals?.filter(r => r.status === 'pending').length || 0,
+        inProgress: referrals?.filter(r => ['in_progress', 'accepted', 'reviewed'].includes(r.status)).length || 0
+    };
 
     const generatePDF = () => {
         setGenerating(true);
@@ -39,14 +79,14 @@ const AdminReports = () => {
         doc.setTextColor(0, 0, 0); // Reset color
         doc.setFontSize(11);
 
-        const userStats = [
-            { label: "Total Registered Users", value: "1,245" },
-            { label: "Active Users (Last 30 days)", value: "892" },
-            { label: "Inactive Users", value: "353" },
-            { label: "Suspended/Deactivated", value: "8" },
+        const pdfUserStats = [
+            { label: "Total Registered Users", value: userStats.total.toString() },
+            { label: "Active Users", value: userStats.active.toString() },
+            { label: "Pending Approvals", value: userStats.pending.toString() },
+            { label: "Suspended/Deactivated", value: userStats.suspended.toString() },
         ];
 
-        userStats.forEach(stat => {
+        pdfUserStats.forEach(stat => {
             doc.text(`${stat.label}:`, 30, yPos);
             doc.text(`${stat.value}`, 120, yPos);
             yPos += 8;
@@ -62,55 +102,35 @@ const AdminReports = () => {
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(11);
 
-        const providerStats = [
-            { label: "Total Registered Providers", value: "148" },
-            { label: "Doctors", value: "89" },
-            { label: "Nurses", value: "42" },
-            { label: "Pharmacists", value: "12" },
-            { label: "Lab Technicians", value: "5" },
+        const pdfProviderStats = [
+            { label: "Total Registered Providers", value: providerStats.total.toString() },
+            { label: "Doctors", value: providerStats.doctors.toString() },
+            { label: "Nurses", value: providerStats.nurses.toString() },
+            { label: "Other Staff", value: providerStats.others.toString() },
         ];
 
-        providerStats.forEach(stat => {
+        pdfProviderStats.forEach(stat => {
             doc.text(`${stat.label}:`, 30, yPos);
             doc.text(`${stat.value}`, 120, yPos);
             yPos += 8;
         });
 
-        // Specialty Breakdown (Mini table)
-        yPos += 5;
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.text("Active Providers by Specialty:", 30, yPos);
-        yPos += 6;
-        doc.setFont("helvetica", "normal");
-
-        const specialties = ["Cardiology: 14", "Pediatrics: 18", "Neurology: 8", "Orthopedics: 12", "General Practice: 37"];
-        specialties.forEach(spec => {
-            doc.text(`- ${spec}`, 35, yPos);
-            yPos += 5;
-        });
-
         yPos += 10;
 
-        // --- 3. System & Security ---
+        // --- 3. Facility Overview ---
         doc.setFontSize(14);
         doc.setTextColor(0, 51, 102);
-        doc.text("3. System & Security", 20, yPos);
+        doc.text("3. Facility Overview", 20, yPos);
         yPos += 10;
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(11);
 
-        const securityStats = [
-            { label: "Daily Active Users (DAU)", value: "124" },
-            { label: "Monthly Active Users (MAU)", value: "892" },
-            { label: "Successful Logins (Tooay)", value: "342" },
-            { label: "Failed Login Attempts", value: "12" },
-            { label: "Security Incidents", value: "0" },
-            { label: "System Uptime", value: "99.98%" },
-            { label: "Error Rate", value: "0.02%" },
+        const pdfFacilityStats = [
+            { label: "Total Facilities", value: facilityStats.total.toString() },
+            { label: "Active Facilities", value: facilityStats.active.toString() },
         ];
 
-        securityStats.forEach(stat => {
+        pdfFacilityStats.forEach(stat => {
             doc.text(`${stat.label}:`, 30, yPos);
             doc.text(`${stat.value}`, 120, yPos);
             yPos += 8;
@@ -118,38 +138,25 @@ const AdminReports = () => {
 
         yPos += 10;
 
-        // --- 4. Support & Feedback ---
+        // --- 4. Referral Statistics ---
         doc.setFontSize(14);
         doc.setTextColor(0, 51, 102);
-        doc.text("4. Support & Feedback", 20, yPos);
+        doc.text("4. Referral Statistics", 20, yPos);
         yPos += 10;
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(11);
 
-        const supportStats = [
-            { label: "Total Support Tickets (This Month)", value: "45" },
-            { label: "Resolved Tickets", value: "42" },
-            { label: "Pending Tickets", value: "3" },
-            { label: "Avg Resolution Time", value: "4.2 hours" },
+        const pdfReferralStats = [
+            { label: "Total Referrals", value: referralStats.total.toString() },
+            { label: "Completed", value: referralStats.completed.toString() },
+            { label: "In Progress", value: referralStats.inProgress.toString() },
+            { label: "Pending", value: referralStats.pending.toString() },
         ];
 
-        supportStats.forEach(stat => {
+        pdfReferralStats.forEach(stat => {
             doc.text(`${stat.label}:`, 30, yPos);
             doc.text(`${stat.value}`, 120, yPos);
             yPos += 8;
-        });
-
-        yPos += 5;
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.text("Common Complaint Categories:", 30, yPos);
-        yPos += 6;
-        doc.setFont("helvetica", "normal");
-
-        const complaints = ["Login Issues (40%)", "Report Generation (20%)", "Notification Delays (15%)", "Other (25%)"];
-        complaints.forEach(comp => {
-            doc.text(`- ${comp}`, 35, yPos);
-            yPos += 5;
         });
 
         // Footer
@@ -187,22 +194,22 @@ const AdminReports = () => {
                         <Users className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">1,245</div>
+                        <div className="text-2xl font-bold">{userStats.total}</div>
                         <p className="text-xs text-muted-foreground">
-                            +180 from last month
+                            Total Registered Users
                         </p>
                         <div className="mt-4 text-sm space-y-2">
                             <div className="flex justify-between">
                                 <span>Active Users</span>
-                                <span className="font-semibold">892</span>
+                                <span className="font-semibold">{userStats.active}</span>
                             </div>
-                            <div className="flex justify-between text-muted-foreground">
-                                <span>Inactive Users</span>
-                                <span>353</span>
+                            <div className="flex justify-between text-warning">
+                                <span>Pending Approval</span>
+                                <span>{userStats.pending}</span>
                             </div>
                             <div className="flex justify-between text-destructive">
-                                <span>Suspended</span>
-                                <span>8</span>
+                                <span>Suspended/Deactivated</span>
+                                <span>{userStats.suspended}</span>
                             </div>
                         </div>
                     </CardContent>
@@ -211,27 +218,28 @@ const AdminReports = () => {
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">
-                            Security Overview
+                            Facility Overview
                         </CardTitle>
                         <ShieldAlert className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold text-success">99.98%</div>
+                        <div className="text-2xl font-bold text-success">{facilityStats.active}</div>
                         <p className="text-xs text-muted-foreground">
-                            System Uptime
+                            Active Facilities
                         </p>
                         <div className="mt-4 text-sm space-y-2">
                             <div className="flex justify-between">
-                                <span>Successful Logins</span>
-                                <span className="font-semibold text-success">342</span>
+                                <span>Total Facilities</span>
+                                <span className="font-semibold">{facilityStats.total}</span>
                             </div>
-                            <div className="flex justify-between text-warning">
-                                <span>Failed Attempts</span>
-                                <span>12</span>
+                            {/* Simple inline display of levels if few, or just summary */}
+                            <div className="flex justify-between text-muted-foreground">
+                                <span>Level 6 Hospitals</span>
+                                <span>{facilityStats.levels['6'] || 0}</span>
                             </div>
                             <div className="flex justify-between text-muted-foreground">
-                                <span>Security Incidents</span>
-                                <span>0</span>
+                                <span>Level 4-5 Hospitals</span>
+                                <span>{(facilityStats.levels['4'] || 0) + (facilityStats.levels['5'] || 0)}</span>
                             </div>
                         </div>
                     </CardContent>
@@ -240,23 +248,27 @@ const AdminReports = () => {
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle className="text-sm font-medium">
-                            Support Tickets
+                            Referral Statistics
                         </CardTitle>
                         <FileText className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">45</div>
+                        <div className="text-2xl font-bold">{referralStats.total}</div>
                         <p className="text-xs text-muted-foreground">
-                            Total tickets this month
+                            Total Referrals
                         </p>
                         <div className="mt-4 text-sm space-y-2">
                             <div className="flex justify-between">
-                                <span>Resolved</span>
-                                <span className="font-semibold text-success">42</span>
+                                <span>Completed</span>
+                                <span className="font-semibold text-success">{referralStats.completed}</span>
                             </div>
-                            <div className="flex justify-between text-warning">
+                            <div className="flex justify-between text-primary">
+                                <span>In Progress</span>
+                                <span>{referralStats.inProgress}</span>
+                            </div>
+                             <div className="flex justify-between text-warning">
                                 <span>Pending</span>
-                                <span>3</span>
+                                <span>{referralStats.pending}</span>
                             </div>
                         </div>
                     </CardContent>
@@ -270,22 +282,22 @@ const AdminReports = () => {
                         <PieChart className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">148</div>
+                        <div className="text-2xl font-bold">{providerStats.total}</div>
                         <p className="text-xs text-muted-foreground">
                             Registered Providers
                         </p>
                         <div className="mt-4 text-sm space-y-2">
                             <div className="flex justify-between">
                                 <span>Doctors</span>
-                                <span className="font-semibold">89</span>
+                                <span className="font-semibold">{providerStats.doctors}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span>Nurses</span>
-                                <span>42</span>
+                                <span>{providerStats.nurses}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span>Others</span>
-                                <span>17</span>
+                                <span>{providerStats.others}</span>
                             </div>
                         </div>
                     </CardContent>

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { dataApi } from "@/lib/api";
+import { dataApi, authApi } from "@/lib/api";
 import { jsPDF } from "jspdf";
 import DashboardLayout from "./DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Download } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { FileText, Download, Shield, Lock, Unlock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,8 +153,80 @@ const PatientDashboard = () => {
     doc.save(`${reportType}_${new Date().toISOString().split("T")[0]}.pdf`);
   };
 
+  const [user, setUser] = useState<any>(null);
+  const [consents, setConsents] = useState<any[]>([]);
+  const [loadingConsents, setLoadingConsents] = useState(false);
+
+  useEffect(() => {
+    fetchUser();
+    fetchReferrals();
+    fetchConsents();
+  }, []);
+
+  const fetchUser = async () => {
+    try {
+      const { data } = await authApi.me();
+      setUser(data.user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+    }
+  };
+
+  const fetchConsents = async () => {
+    try {
+      const { data } = await dataApi.getConsents();
+      setConsents(data || []);
+    } catch (error) {
+      console.error("Error fetching consents:", error);
+    }
+  };
+
+  // Derive potential consent targets from referrals (Doctors the patient has interacted with)
+  const consentTargets = referrals.reduce((acc: any[], r) => {
+    if (r.referring_doctor?.full_name) {
+      if (!acc.find(t => t.id === r.referring_doctor_id)) {
+        acc.push({ id: r.referring_doctor_id, name: r.referring_doctor.full_name, type: 'doctor' });
+      }
+    }
+    if (r.assigned_doctor?.full_name) {
+      if (!acc.find(t => t.id === r.assigned_doctor_id)) {
+        acc.push({ id: r.assigned_doctor_id, name: r.assigned_doctor.full_name, type: 'doctor' });
+      }
+    }
+    return acc;
+  }, []);
+
+  const handleConsentToggle = async (target: any) => {
+    const currentConsent = consents.find(c => c.entity_id === target.id && c.entity_type === target.type);
+    const newStatus = currentConsent?.status === 'granted' ? 'revoked' : 'granted';
+
+    // Optimistic update
+    const previousConsents = [...consents];
+    if (currentConsent) {
+      setConsents(prev => prev.map(c => c.id === currentConsent.id ? { ...c, status: newStatus } : c));
+    } else {
+       setConsents(prev => [...prev, { entity_id: target.id, entity_type: target.type, status: newStatus }]);
+    }
+
+    try {
+      await dataApi.updateConsent({
+        entity_type: target.type,
+        entity_id: target.id,
+        entity_name: target.name,
+        status: newStatus
+      });
+      // Refresh to get real IDs etc
+      fetchConsents(); 
+    } catch (error) {
+      console.error("Failed to update consent");
+      setConsents(previousConsents); // Revert
+    }
+  };
+
+  const dashboardTitle = user ? `${user.full_name}'s Dashboard` : "Patient Dashboard";
+
   return (
-    <DashboardLayout title="Patient Dashboard" role="Patient">
+    <DashboardLayout title={dashboardTitle} role="Patient">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="pt-6">
@@ -365,6 +437,56 @@ const PatientDashboard = () => {
             <Download className="mr-2 h-5 w-5" />
             Generate & Download Report
           </Button>
+        </CardContent>
+      </Card>
+      <Card className="mb-6">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-primary" />
+            <CardTitle className="text-xl">Consent Management</CardTitle>
+          </div>
+          <CardDescription>
+             Manage which healthcare providers have access to your medical records.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+             {consentTargets.length === 0 ? (
+               <p className="text-muted-foreground text-sm">No recent healthcare provider interactions found.</p>
+             ) : (
+               consentTargets.map((target, idx) => {
+                 const consent = consents.find(c => c.entity_id === target.id && c.entity_type === target.type);
+                 const isGranted = consent?.status === 'granted'; // Default to denied if not found, usually default is 'read' in some systems but let's be strict
+
+                 return (
+                   <div key={idx} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border">
+                     <div className="flex items-center gap-3">
+                       <div className={`p-2 rounded-full ${isGranted ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+                         {isGranted ? <Unlock size={18} /> : <Lock size={18} />}
+                       </div>
+                       <div>
+                         <p className="font-semibold">{target.name}</p>
+                         <p className="text-xs text-muted-foreground capitalize">{target.type}</p>
+                       </div>
+                     </div>
+                     <div className="flex items-center gap-3">
+                        <span className={`text-sm ${isGranted ? 'text-success' : 'text-muted-foreground'}`}>
+                          {isGranted ? 'Access Granted' : 'Access Revoked'}
+                        </span>
+                        <Button 
+                          variant={isGranted ? "outline" : "default"}
+                          size="sm"
+                          onClick={() => handleConsentToggle(target)}
+                          className={isGranted ? "border-destructive text-destructive hover:bg-destructive/10" : ""}
+                        >
+                          {isGranted ? "Revoke Access" : "Grant Access"}
+                        </Button>
+                     </div>
+                   </div>
+                 );
+               })
+             )}
+          </div>
         </CardContent>
       </Card>
     </DashboardLayout>

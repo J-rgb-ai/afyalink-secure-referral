@@ -70,7 +70,7 @@ router.get('/referrals', (req, res) => {
 });
 
 router.post('/referrals', (req, res) => {
-  const { patient_id, patientEmail, facility_from, facility_to, reason, urgency } = req.body;
+  const { patient_id, patientEmail, facility_from, facility_to, reason, urgency, diagnosis, notes } = req.body;
   const { randomUUID } = require('crypto');
   
   try {
@@ -95,9 +95,9 @@ router.post('/referrals', (req, res) => {
     const referring_doctor_id = req.user.id; 
 
     db.prepare(`
-      INSERT INTO referrals (id, patient_id, referring_doctor_id, facility_from, facility_to, reason, urgency, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, finalPatientId, referring_doctor_id, facility_from, facility_to, reason, urgency, status);
+      INSERT INTO referrals (id, patient_id, referring_doctor_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, finalPatientId, referring_doctor_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes);
 
     res.json({ message: 'Referral created', id });
   } catch (error) {
@@ -340,6 +340,49 @@ router.post('/feedback', (req, res) => {
   }
 });
 
+// === Admin Security Stats ===
+router.get('/admin/security-stats', (req, res) => {
+  try {
+     // 1. Failed Logins (last 24h)
+     const failedLogins = db.prepare(`
+        SELECT COUNT(*) as count FROM audit_logs 
+        WHERE action = 'LOGIN_FAILED' 
+        AND created_at > datetime('now', '-1 day')
+     `).get().count;
+
+     // 2. Active Sessions (Unique successful logins in last 24h) - Proxy for active sessions
+     const activeSessions = db.prepare(`
+        SELECT COUNT(DISTINCT user_id) as count FROM audit_logs 
+        WHERE action = 'LOGIN_SUCCESS' 
+        AND created_at > datetime('now', '-1 day')
+     `).get().count;
+
+     // 3. Recent Audit Logs
+     const logs = db.prepare(`
+        SELECT a.*, p.full_name, p.email 
+        FROM audit_logs a
+        LEFT JOIN profiles p ON a.user_id = p.id
+        ORDER BY a.created_at DESC
+        LIMIT 10
+     `).all();
+
+     // 4. Security Score (Mock calculation for now, or based on failures)
+     // Base 100, minus 5 per failure in last 24h
+     let securityScore = 100 - (failedLogins * 5);
+     if (securityScore < 0) securityScore = 0;
+
+     res.json({
+         failedLogins,
+         activeSessions,
+         securityScore,
+         logs
+     });
+  } catch (error) {
+    console.error("Security stats error:", error);
+    res.status(500).json({ error: 'Failed to fetch security stats' });
+  }
+});
+
 // === Stats / Dashboard ===
 router.get('/stats', (req, res) => {
   try {
@@ -352,6 +395,50 @@ router.get('/stats', (req, res) => {
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// === Consents ===
+router.get('/consents', (req, res) => {
+  try {
+    const consents = db.prepare(`
+      SELECT * FROM consents WHERE patient_id = ? ORDER BY created_at DESC
+    `).all(req.user.id);
+    res.json(consents);
+  } catch (error) {
+    console.error('Error fetching consents:', error);
+    res.status(500).json({ error: 'Failed to fetch consents' });
+  }
+});
+
+router.post('/consents', (req, res) => {
+  const { entity_type, entity_id, entity_name, status } = req.body;
+  const { randomUUID } = require('crypto');
+  
+  try {
+    // Check if consent already exists
+    const existing = db.prepare(`
+      SELECT id FROM consents 
+      WHERE patient_id = ? AND entity_type = ? AND entity_id = ?
+    `).get(req.user.id, entity_type, entity_id);
+
+    if (existing) {
+      db.prepare(`
+        UPDATE consents 
+        SET status = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?
+      `).run(status, existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO consents (id, patient_id, entity_type, entity_id, entity_name, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(randomUUID(), req.user.id, entity_type, entity_id, entity_name, status);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating consent:', error);
+    res.status(500).json({ error: 'Failed to update consent' });
   }
 });
 

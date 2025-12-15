@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { authApi, dataApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -448,6 +448,61 @@ const AdminDashboard = () => {
     }
   };
 
+  const [securityStats, setSecurityStats] = useState({
+    activeSessions: 0,
+    failedLogins: 0,
+    securityScore: 100,
+    logs: [] as any[]
+  });
+
+  const fetchData = async () => {
+    try {
+      const usersRes = await dataApi.getHealthcareProviders(); // Using providers for now as users list
+      // Ideally get all users or specific endpoint
+      setHealthcareProviders(usersRes.data || []);
+      
+      const patientsRes = await dataApi.getPatients();
+      setPatients(patientsRes.data || []);
+
+      const facilitiesRes = await dataApi.getFacilities();
+      setDbFacilities(facilitiesRes.data || []);
+
+      const referralsRes = await dataApi.getReferrals();
+      setReferrals(referralsRes.data || []);
+      
+      const statsRes = await dataApi.getAdminStats();
+      if (statsRes.data) {
+          const { active_referrals, pending_referrals, completed_referrals } = statsRes.data;
+          // This part seems to be updating analyticsStats directly, which might conflict with the useMemo.
+          // Assuming this is a temporary or intended override for some dashboard view.
+          // If analyticsStats is meant to be derived solely from 'referrals' state, this block should be removed.
+          // For now, I'll keep it as provided in the instruction.
+          // setAnalyticsStats(prev => ({
+          //     ...prev,
+          //     currentCount: active_referrals + pending_referrals + completed_referrals, // simplistic total
+          //     statusData: [
+          //         { name: "Pending", count: pending_referrals, percent: 30 }, // percents are mock in backend for now or calc here
+          //         { name: "Active", count: active_referrals, percent: 50 },
+          //         { name: "Completed", count: completed_referrals, percent: 20 }
+          //     ]
+          // }));
+      }
+
+      // Fetch Security Stats
+      try {
+        const secRes = await dataApi.getSecurityStats();
+        if (secRes.data) {
+          setSecurityStats(secRes.data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch security stats", err);
+      }
+
+    } catch (error) {
+      console.error("Error fetching admin data:", error);
+    }
+  };
+
   const fetchFacilityLevels = async () => {
     try {
       const { data } = await dataApi.getFacilityLevels();
@@ -532,18 +587,74 @@ const AdminDashboard = () => {
   };
 
   const dashboardStats = [
-    { label: "Total Referrals", value: stats.totalReferrals.toString(), icon: ClipboardList, color: "bg-primary", change: "+12%" },
-    { label: "Active Facilities", value: dbFacilities.filter(f => f.status === "active").length.toString(), icon: Building2, color: "bg-success", change: "+5%" },
-    { label: "Total Users", value: stats.totalUsers.toString(), icon: UserCircle, color: "bg-accent", change: "+8%" },
-    { label: "Pending Referrals", value: stats.pendingReferrals.toString(), icon: Clock, color: "bg-warning", change: "-3%" }
+    { label: "Total Referrals", value: stats.totalReferrals.toString(), icon: ClipboardList, color: "bg-primary", change: "" },
+    { label: "Active Facilities", value: dbFacilities.filter(f => f.status === "active").length.toString(), icon: Building2, color: "bg-success", change: "" },
+    { label: "Total Users", value: stats.totalUsers.toString(), icon: UserCircle, color: "bg-accent", change: "" },
+    { label: "Pending Referrals", value: stats.pendingReferrals.toString(), icon: Clock, color: "bg-warning", change: "" }
   ];
 
-  const facilities = [
-    { name: "Nairobi Hospital", type: "Private Hospital", referrals: 145, status: "Active", rating: 4.8 },
-    { name: "Kenyatta Hospital", type: "Public Hospital", referrals: 289, status: "Active", rating: 4.5 },
-    { name: "Aga Khan Hospital", type: "Private Hospital", referrals: 178, status: "Active", rating: 4.9 },
-    { name: "Mater Hospital", type: "Private Hospital", referrals: 134, status: "Active", rating: 4.7 }
-  ];
+  const analyticsStats = useMemo(() => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const lastMonthDate = new Date(now);
+    lastMonthDate.setMonth(currentMonth - 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
+    const currentMonthRefs = referrals.filter(r => {
+      const d = new Date(r.created_at);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    });
+
+    const lastMonthRefs = referrals.filter(r => {
+      const d = new Date(r.created_at);
+      return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+    });
+
+    const currentCount = currentMonthRefs.length;
+    const lastCount = lastMonthRefs.length;
+    const growth = lastCount > 0 ? ((currentCount - lastCount) / lastCount) * 100 : (currentCount > 0 ? 100 : 0);
+
+    // Status Breakdown
+    const statusCounts: Record<string, number> = {};
+    referrals.forEach(r => {
+      const s = r.status || 'unknown';
+      statusCounts[s] = (statusCounts[s] || 0) + 1;
+    });
+    const statusData = Object.entries(statusCounts)
+      .map(([name, count]) => ({ 
+        name: name.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()), 
+        count, 
+        percent: referrals.length > 0 ? Math.round((count / referrals.length) * 100) : 0 
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    // Success Rate (Completed / Total)
+    const completedCount = referrals.filter(r => r.status === 'completed').length;
+    const successRate = referrals.length > 0 ? (completedCount / referrals.length) * 100 : 0;
+
+    // Avg Processing Time (Completed only)
+    const completedRefs = referrals.filter(r => r.status === 'completed' && r.updated_at);
+    let avgTimeDays = 0;
+    if (completedRefs.length > 0) {
+      const totalTimeMs = completedRefs.reduce((acc, r) => {
+        return acc + (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime());
+      }, 0);
+      avgTimeDays = totalTimeMs / (completedRefs.length * 1000 * 60 * 60 * 24);
+    }
+
+    return {
+      currentCount,
+      lastCount,
+      growth,
+      statusData,
+      successRate,
+      avgTimeDays
+    };
+  }, [referrals]);
+
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -1855,14 +1966,16 @@ const AdminDashboard = () => {
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
                         <span className="text-sm">This Month</span>
-                        <span className="font-semibold">247 referrals</span>
+                        <span className="font-semibold">{analyticsStats.currentCount} referrals</span>
                       </div>
                       <div className="w-full bg-muted h-2 rounded-full">
-                        <div className="bg-primary h-2 rounded-full" style={{ width: "75%" }}></div>
+                        <div className="bg-primary h-2 rounded-full" style={{ width: `${Math.min(100, Math.max(5, (analyticsStats.currentCount / (Math.max(analyticsStats.lastCount, 1) * 2)) * 100))}%` }}></div>
                       </div>
                       <div className="flex justify-between items-center text-sm text-muted-foreground">
-                        <span>Last Month: 198</span>
-                        <span className="text-success">+24.7%</span>
+                        <span>Last Month: {analyticsStats.lastCount}</span>
+                        <span className={analyticsStats.growth >= 0 ? "text-success" : "text-destructive"}>
+                          {analyticsStats.growth > 0 ? "+" : ""}{analyticsStats.growth.toFixed(1)}%
+                        </span>
                       </div>
                     </div>
                   </CardContent>
@@ -1870,25 +1983,25 @@ const AdminDashboard = () => {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Top Specialties</CardTitle>
+                    <CardTitle>Referrals by Status</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {[
-                        { name: "Cardiology", count: 89, percent: 35 },
-                        { name: "Orthopedics", count: 67, percent: 27 },
-                        { name: "Neurology", count: 54, percent: 22 },
-                      ].map((specialty, i) => (
-                        <div key={i}>
-                          <div className="flex justify-between mb-1">
-                            <span className="text-sm">{specialty.name}</span>
-                            <span className="text-sm font-semibold">{specialty.count}</span>
+                      {analyticsStats.statusData.length === 0 ? (
+                        <p className="text-muted-foreground text-sm">No data available</p>
+                      ) : (
+                        analyticsStats.statusData.map((stat, i) => (
+                          <div key={i}>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-sm">{stat.name}</span>
+                              <span className="text-sm font-semibold">{stat.count}</span>
+                            </div>
+                            <div className="w-full bg-muted h-2 rounded-full">
+                              <div className="bg-primary h-2 rounded-full" style={{ width: `${stat.percent}%` }}></div>
+                            </div>
                           </div>
-                          <div className="w-full bg-muted h-2 rounded-full">
-                            <div className="bg-primary h-2 rounded-full" style={{ width: `${specialty.percent}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1899,9 +2012,9 @@ const AdminDashboard = () => {
                   </CardHeader>
                   <CardContent>
                     <div className="text-center py-4">
-                      <p className="text-5xl font-bold text-primary">2.3</p>
+                      <p className="text-5xl font-bold text-primary">{analyticsStats.avgTimeDays.toFixed(1)}</p>
                       <p className="text-muted-foreground mt-2">days average</p>
-                      <p className="text-sm text-success mt-1">-15% from last month</p>
+                      <p className="text-sm text-muted-foreground mt-1">processing time</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -1912,9 +2025,9 @@ const AdminDashboard = () => {
                   </CardHeader>
                   <CardContent>
                     <div className="text-center py-4">
-                      <p className="text-5xl font-bold text-success">94.2%</p>
+                      <p className="text-5xl font-bold text-success">{analyticsStats.successRate.toFixed(1)}%</p>
                       <p className="text-muted-foreground mt-2">completed referrals</p>
-                      <p className="text-sm text-success mt-1">+2.1% improvement</p>
+                      <p className="text-sm text-muted-foreground mt-1">all time</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -1953,8 +2066,8 @@ const AdminDashboard = () => {
                   <CardContent className="pt-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Active Sessions</p>
-                        <p className="text-3xl font-bold">127</p>
+                        <p className="text-sm text-muted-foreground">Active Sessions (24h)</p>
+                        <p className="text-3xl font-bold">{securityStats.activeSessions}</p>
                       </div>
                       <Users className="h-8 w-8 text-primary" />
                     </div>
@@ -1965,7 +2078,7 @@ const AdminDashboard = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Failed Logins (24h)</p>
-                        <p className="text-3xl font-bold text-warning">8</p>
+                        <p className="text-3xl font-bold text-warning">{securityStats.failedLogins}</p>
                       </div>
                       <AlertTriangle className="h-8 w-8 text-warning" />
                     </div>
@@ -1976,7 +2089,7 @@ const AdminDashboard = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Security Score</p>
-                        <p className="text-3xl font-bold text-success">98%</p>
+                        <p className="text-3xl font-bold text-success">{securityStats.securityScore}%</p>
                       </div>
                       <Shield className="h-8 w-8 text-success" />
                     </div>
@@ -1990,11 +2103,10 @@ const AdminDashboard = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {[
-                      { action: "User Login", user: "admin@afyalink.com", time: "2 minutes ago", type: "success" },
-                      { action: "Referral Created", user: "doctor@nairobi.hospital", time: "15 minutes ago", type: "info" },
-                      { action: "Failed Login Attempt", user: "unknown@example.com", time: "1 hour ago", type: "warning" },
-                    ].map((log, i) => (
+                    {securityStats.logs.length === 0 ? (
+                        <p className="text-muted-foreground text-center py-4">No audit logs found.</p>
+                    ) : (
+                        securityStats.logs.map((log, i) => (
                       <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
                         <div className="flex items-center gap-3">
                           <div className={`w-2 h-2 rounded-full ${log.type === "success" ? "bg-success" :
@@ -2003,12 +2115,15 @@ const AdminDashboard = () => {
                             }`}></div>
                           <div>
                             <p className="font-semibold text-sm">{log.action}</p>
-                            <p className="text-xs text-muted-foreground">{log.user}</p>
+                            <p className="text-xs text-muted-foreground">
+                                {log.full_name ? `${log.full_name} (${log.email})` : (log.email || 'System/Unknown')}
+                                {log.details && ` - ${log.details}`}
+                            </p>
                           </div>
                         </div>
-                        <span className="text-xs text-muted-foreground">{log.time}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</span>
                       </div>
-                    ))}
+                    )))}
                   </div>
                 </CardContent>
               </Card>
@@ -2139,7 +2254,13 @@ const AdminDashboard = () => {
           )}
 
           {activeTab === "reports" && (
-            <AdminReports />
+            <AdminReports
+              stats={stats}
+              providers={healthcareProviders}
+              patients={patients}
+              facilities={dbFacilities}
+              referrals={referrals}
+            />
           )}
         </div>
       </main>
