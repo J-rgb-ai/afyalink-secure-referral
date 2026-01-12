@@ -302,7 +302,7 @@ const Auth = () => {
                   <Input
                     id="signup-code"
                     type="text"
-                    placeholder="DOCTOR2024 / NURSE2024 / PATIENT2024"
+                    placeholder="DOCTOR2026 / NURSE2026 / PATIENT2026"
                     value={signupData.registrationCode}
                     onChange={(e) => setSignupData({ ...signupData, registrationCode: e.target.value })}
                     required
