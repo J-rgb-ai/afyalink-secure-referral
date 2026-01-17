@@ -30,15 +30,17 @@ import AdminSettings from "./settings/AdminSettings";
 import AdminReports from "./reports/AdminReports";
 
 interface UserRowProps {
+  id: string;
   name: string;
   email: string;
   role: string;
   facility: string;
   status: string;
   lastActive: string;
+  onAssignFacility: (userId: string) => void;
 }
 
-function UserRow({ name, email, role, facility, status, lastActive }: UserRowProps) {
+function UserRow({ id, name, email, role, facility, status, lastActive, onAssignFacility }: UserRowProps) {
   const [showActions, setShowActions] = useState(false);
   const [currentStatus, setCurrentStatus] = useState(status);
 
@@ -106,6 +108,18 @@ function UserRow({ name, email, role, facility, status, lastActive }: UserRowPro
 
           {showActions && (
             <div className="absolute right-0 mt-2 w-48 bg-card rounded-lg shadow-lg border z-10">
+              {onAssignFacility && (!facility || facility === "Unassigned" || facility === "N/A") && (
+              <button
+                onClick={() => {
+                  onAssignFacility(id);
+                  setShowActions(false);
+                }}
+                className="w-full flex items-center gap-2 px-4 py-3 hover:bg-muted text-left"
+              >
+                <Building2 size={18} className="text-primary" />
+                <span>Assign Facility</span>
+              </button>
+              )}
               <button
                 onClick={() => handleAction("Active")}
                 disabled={currentStatus === "Active"}
@@ -230,7 +244,60 @@ const AdminDashboard = () => {
   const [allNotifications, setAllNotifications] = useState<any[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [newNotification, setNewNotification] = useState({ title: "", message: "", recipient: "all" });
-  const [sendingNotification, setSendingNotification] = useState(false);
+
+
+  // Facility Assignment State
+  const [isAssignFacilityOpen, setIsAssignFacilityOpen] = useState(false);
+  const [assigningUser, setAssigningUser] = useState<HealthcareProvider | null>(null);
+  const [selectedFacilityId, setSelectedFacilityId] = useState<string>("");
+
+  const openAssignFacility = (userId: string) => {
+    let user = healthcareProviders.find(u => u.id === userId);
+    if (!user) {
+      const patient = patients.find(p => p.id === userId);
+      if (patient) {
+        user = { ...patient, role: 'patient' };
+      }
+    }
+
+    if (user) {
+      setAssigningUser(user);
+      setIsAssignFacilityOpen(true);
+    }
+  };
+
+  const handleAssignFacilitySubmit = async () => {
+    if (!assigningUser || !selectedFacilityId) return;
+
+    try {
+      await dataApi.assignFacility(assigningUser.id, {
+        facilityId: selectedFacilityId,
+        role: assigningUser.role
+      });
+
+      toast({
+        title: "Facility Assigned",
+        description: `Assigned ${assigningUser.full_name} to facility.`
+      });
+
+      setIsAssignFacilityOpen(false);
+      setAssigningUser(null);
+      setSelectedFacilityId("");
+      fetchHealthcareProviders(); // Refresh list
+      fetchPatients();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.details || error.response?.data?.error || "Failed to assign facility",
+        variant: "destructive"
+      });
+    }
+  };
+
+
+
+
+
 
   useEffect(() => {
     fetchStats();
@@ -460,7 +527,7 @@ const AdminDashboard = () => {
       const usersRes = await dataApi.getHealthcareProviders(); // Using providers for now as users list
       // Ideally get all users or specific endpoint
       setHealthcareProviders(usersRes.data || []);
-      
+
       const patientsRes = await dataApi.getPatients();
       setPatients(patientsRes.data || []);
 
@@ -469,23 +536,23 @@ const AdminDashboard = () => {
 
       const referralsRes = await dataApi.getReferrals();
       setReferrals(referralsRes.data || []);
-      
+
       const statsRes = await dataApi.getAdminStats();
       if (statsRes.data) {
-          const { active_referrals, pending_referrals, completed_referrals } = statsRes.data;
-          // This part seems to be updating analyticsStats directly, which might conflict with the useMemo.
-          // Assuming this is a temporary or intended override for some dashboard view.
-          // If analyticsStats is meant to be derived solely from 'referrals' state, this block should be removed.
-          // For now, I'll keep it as provided in the instruction.
-          // setAnalyticsStats(prev => ({
-          //     ...prev,
-          //     currentCount: active_referrals + pending_referrals + completed_referrals, // simplistic total
-          //     statusData: [
-          //         { name: "Pending", count: pending_referrals, percent: 30 }, // percents are mock in backend for now or calc here
-          //         { name: "Active", count: active_referrals, percent: 50 },
-          //         { name: "Completed", count: completed_referrals, percent: 20 }
-          //     ]
-          // }));
+        const { active_referrals, pending_referrals, completed_referrals } = statsRes.data;
+        // This part seems to be updating analyticsStats directly, which might conflict with the useMemo.
+        // Assuming this is a temporary or intended override for some dashboard view.
+        // If analyticsStats is meant to be derived solely from 'referrals' state, this block should be removed.
+        // For now, I'll keep it as provided in the instruction.
+        // setAnalyticsStats(prev => ({
+        //     ...prev,
+        //     currentCount: active_referrals + pending_referrals + completed_referrals, // simplistic total
+        //     statusData: [
+        //         { name: "Pending", count: pending_referrals, percent: 30 }, // percents are mock in backend for now or calc here
+        //         { name: "Active", count: active_referrals, percent: 50 },
+        //         { name: "Completed", count: completed_referrals, percent: 20 }
+        //     ]
+        // }));
       }
 
       // Fetch Security Stats
@@ -623,10 +690,10 @@ const AdminDashboard = () => {
       statusCounts[s] = (statusCounts[s] || 0) + 1;
     });
     const statusData = Object.entries(statusCounts)
-      .map(([name, count]) => ({ 
-        name: name.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()), 
-        count, 
-        percent: referrals.length > 0 ? Math.round((count / referrals.length) * 100) : 0 
+      .map(([name, count]) => ({
+        name: name.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        count,
+        percent: referrals.length > 0 ? Math.round((count / referrals.length) * 100) : 0
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 3);
@@ -1610,12 +1677,14 @@ const AdminDashboard = () => {
                                 .map(user => (
                                   <UserRow
                                     key={user.id}
+                                    id={user.id}
                                     name={user.full_name}
                                     email={user.email}
                                     role="Doctor"
                                     facility={user.facility_name || "Unassigned"}
                                     status={user.status}
                                     lastActive="Recently"
+                                    onAssignFacility={openAssignFacility}
                                   />
                                 ))
                             )}
@@ -1636,12 +1705,14 @@ const AdminDashboard = () => {
                                 .map(user => (
                                   <UserRow
                                     key={user.id}
+                                    id={user.id}
                                     name={user.full_name}
                                     email={user.email}
                                     role="Nurse"
                                     facility={user.facility_name || "Unassigned"}
                                     status={user.status}
                                     lastActive="Recently"
+                                    onAssignFacility={openAssignFacility}
                                   />
                                 ))
                             )}
@@ -1661,12 +1732,14 @@ const AdminDashboard = () => {
                                 .map(patient => (
                                   <UserRow
                                     key={patient.id}
+                                    id={patient.id}
                                     name={patient.full_name}
                                     email={patient.email}
                                     role="Patient"
-                                    facility="N/A"
+                                    facility={patient.facility_name || "Unassigned"}
                                     status={patient.status}
                                     lastActive="Recently"
+                                    onAssignFacility={openAssignFacility}
                                   />
                                 ))
                             )}
@@ -1687,12 +1760,14 @@ const AdminDashboard = () => {
                                 .map(user => (
                                   <UserRow
                                     key={user.id}
+                                    id={user.id}
                                     name={user.full_name}
                                     email={user.email}
                                     role="Pharmacist"
                                     facility={user.facility_name || "Unassigned"}
                                     status={user.status}
                                     lastActive="Recently"
+                                    onAssignFacility={openAssignFacility}
                                   />
                                 ))
                             )}
@@ -1713,12 +1788,14 @@ const AdminDashboard = () => {
                                 .map(user => (
                                   <UserRow
                                     key={user.id}
+                                    id={user.id}
                                     name={user.full_name}
                                     email={user.email}
                                     role="Lab Technician"
                                     facility={user.facility_name || "Unassigned"}
                                     status={user.status}
                                     lastActive="Recently"
+                                    onAssignFacility={openAssignFacility}
                                   />
                                 ))
                             )}
@@ -2104,26 +2181,26 @@ const AdminDashboard = () => {
                 <CardContent>
                   <div className="space-y-3">
                     {securityStats.logs.length === 0 ? (
-                        <p className="text-muted-foreground text-center py-4">No audit logs found.</p>
+                      <p className="text-muted-foreground text-center py-4">No audit logs found.</p>
                     ) : (
-                        securityStats.logs.map((log, i) => (
-                      <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-2 h-2 rounded-full ${log.type === "success" ? "bg-success" :
-                            log.type === "warning" ? "bg-warning" :
-                              "bg-primary"
-                            }`}></div>
-                          <div>
-                            <p className="font-semibold text-sm">{log.action}</p>
-                            <p className="text-xs text-muted-foreground">
+                      securityStats.logs.map((log, i) => (
+                        <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${log.type === "success" ? "bg-success" :
+                              log.type === "warning" ? "bg-warning" :
+                                "bg-primary"
+                              }`}></div>
+                            <div>
+                              <p className="font-semibold text-sm">{log.action}</p>
+                              <p className="text-xs text-muted-foreground">
                                 {log.full_name ? `${log.full_name} (${log.email})` : (log.email || 'System/Unknown')}
                                 {log.details && ` - ${log.details}`}
-                            </p>
+                              </p>
+                            </div>
                           </div>
+                          <span className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</span>
                         </div>
-                        <span className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</span>
-                      </div>
-                    )))}
+                      )))}
                   </div>
                 </CardContent>
               </Card>
@@ -2264,6 +2341,68 @@ const AdminDashboard = () => {
           )}
         </div>
       </main>
+      {/* Assign Facility Dialog */}
+      <Dialog open={isAssignFacilityOpen} onOpenChange={setIsAssignFacilityOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Facility</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Provider</Label>
+              <Input value={assigningUser?.full_name || ""} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label>Select Facility</Label>
+              <Select value={selectedFacilityId} onValueChange={setSelectedFacilityId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a facility" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {dbFacilities.map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignFacilityOpen(false)}>Cancel</Button>
+            <Button onClick={handleAssignFacilitySubmit}>Assign</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Assign Facility Dialog */}
+      <Dialog open={isAssignFacilityOpen} onOpenChange={setIsAssignFacilityOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Facility</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Provider</Label>
+              <Input value={assigningUser?.full_name || ""} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label>Select Facility</Label>
+              <Select value={selectedFacilityId} onValueChange={setSelectedFacilityId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a facility" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {dbFacilities.map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignFacilityOpen(false)}>Cancel</Button>
+            <Button onClick={handleAssignFacilitySubmit}>Assign</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

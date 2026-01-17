@@ -35,24 +35,41 @@ router.get('/referrals', (req, res) => {
       LEFT JOIN profiles p_assigned ON r.assigned_doctor_id = p_assigned.id
       LEFT JOIN profiles p_nurse ON r.assigned_nurse_id = p_nurse.id
     `;
-    
+
     let params = [];
 
     if (roles.includes('patient')) {
       query += ` WHERE r.patient_id = ?`;
       params.push(req.user.id);
     } else if (roles.includes('doctor')) {
+      // Get doctor's facility name (Referrals store Names, not IDs)
+      const staffRecord = db.prepare(`
+        SELECT f.name 
+        FROM medical_staff ms
+        JOIN facilities f ON ms.facility_id = f.id
+        WHERE ms.user_id = ?
+      `).get(req.user.id);
+
+      const facilityName = staffRecord ? staffRecord.name : null;
+
       query += ` WHERE r.referring_doctor_id = ? OR r.assigned_doctor_id = ?`;
       params.push(req.user.id, req.user.id);
+
+      if (facilityName) {
+        // Show referrals headed TO this facility (Incoming) OR FROM this facility (Outgoing)
+        query += ` OR (r.facility_to = ? AND r.assigned_doctor_id IS NULL) OR r.facility_from = ?`;
+        params.push(facilityName, facilityName);
+      }
+
     } else if (roles.includes('nurse')) {
-       query += ` WHERE (r.assigned_nurse_id = ? OR r.assigned_nurse_id IS NULL)`;
-       params.push(req.user.id);
+      query += ` WHERE (r.assigned_nurse_id = ? OR r.assigned_nurse_id IS NULL)`;
+      params.push(req.user.id);
     }
-    
+
     query += ` ORDER BY r.created_at DESC`;
 
     const rawReferrals = db.prepare(query).all(...params);
-    
+
     // Transform to nested structure to match frontend expectations
     const referrals = rawReferrals.map(r => ({
       ...r,
@@ -72,7 +89,7 @@ router.get('/referrals', (req, res) => {
 router.post('/referrals', (req, res) => {
   const { patient_id, patientEmail, facility_from, facility_to, reason, urgency, diagnosis, notes } = req.body;
   const { randomUUID } = require('crypto');
-  
+
   try {
     let finalPatientId = patient_id;
 
@@ -84,37 +101,48 @@ router.post('/referrals', (req, res) => {
         // Create new pending patient
         finalPatientId = randomUUID();
         const newPatient = {
-             id: finalPatientId,
-             email: patientEmail,
-             full_name: req.body.patientName,
-             status: 'pending'
+          id: finalPatientId,
+          email: patientEmail,
+          full_name: req.body.patientName,
+          status: 'pending'
         };
-        
+
         db.transaction(() => {
-             db.prepare(`
+          db.prepare(`
                 INSERT INTO profiles (id, email, full_name, status)
                 VALUES (?, ?, ?, ?)
              `).run(newPatient.id, newPatient.email, newPatient.full_name, newPatient.status);
-             
-             db.prepare(`
+
+          db.prepare(`
                 INSERT INTO user_roles (id, user_id, role)
                 VALUES (?, ?, ?)
              `).run(randomUUID(), newPatient.id, 'patient');
         })();
       } else {
-         return res.status(404).json({ error: 'Patient not found and no name provided for creation' });
+        return res.status(404).json({ error: 'Patient not found and no name provided for creation' });
       }
     }
 
     if (!finalPatientId) {
-       return res.status(400).json({ error: 'Patient ID or Email is required' });
+      return res.status(400).json({ error: 'Patient ID or Email is required' });
     }
 
     const id = randomUUID();
     const status = 'pending';
-    
+
+    // Check for existing active referral
+    const existingReferral = db.prepare(`
+        SELECT id FROM referrals 
+        WHERE patient_id = ? 
+        AND status IN ('pending', 'accepted', 'in_progress')
+    `).get(finalPatientId);
+
+    if (existingReferral) {
+      return res.status(400).json({ error: 'Patient already has an active referral.' });
+    }
+
     // Defaults
-    const referring_doctor_id = req.user.id; 
+    const referring_doctor_id = req.user.id;
 
     db.prepare(`
       INSERT INTO referrals (id, patient_id, referring_doctor_id, assigned_nurse_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes)
@@ -131,15 +159,15 @@ router.post('/referrals', (req, res) => {
 router.put('/referrals/:id', (req, res) => {
   const { id } = req.params;
   const updates = req.body;
-  
-  try {
-     const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
-     const values = Object.values(updates);
-     
-     if (fields.length === 0) return res.json({ success: true });
 
-     db.prepare(`UPDATE referrals SET ${fields} WHERE id = ?`).run(...values, id);
-     res.json({ success: true });
+  try {
+    const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+    const values = Object.values(updates);
+
+    if (fields.length === 0) return res.json({ success: true });
+
+    db.prepare(`UPDATE referrals SET ${fields} WHERE id = ?`).run(...values, id);
+    res.json({ success: true });
   } catch (error) {
     console.error('Error updating referral:', error);
     res.status(500).json({ error: 'Failed to update referral' });
@@ -148,40 +176,40 @@ router.put('/referrals/:id', (req, res) => {
 
 // === Admin & Stats ===
 router.get('/admin/stats', (req, res) => {
-    try {
-        const stats = {
-            totalUsers: db.prepare('SELECT COUNT(*) as c FROM profiles').get().c,
-            totalReferrals: db.prepare('SELECT COUNT(*) as c FROM referrals').get().c,
-            totalCodes: db.prepare('SELECT COUNT(*) as c FROM registration_codes').get().c,
-            pendingReferrals: db.prepare("SELECT COUNT(*) as c FROM referrals WHERE status = 'pending'").get().c,
-            pendingUsers: db.prepare("SELECT COUNT(*) as c FROM profiles WHERE status = 'pending'").get().c,
-        };
-        res.json(stats);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch stats' });
-    }
+  try {
+    const stats = {
+      totalUsers: db.prepare('SELECT COUNT(*) as c FROM profiles').get().c,
+      totalReferrals: db.prepare('SELECT COUNT(*) as c FROM referrals').get().c,
+      totalCodes: db.prepare('SELECT COUNT(*) as c FROM registration_codes').get().c,
+      pendingReferrals: db.prepare("SELECT COUNT(*) as c FROM referrals WHERE status = 'pending'").get().c,
+      pendingUsers: db.prepare("SELECT COUNT(*) as c FROM profiles WHERE status = 'pending'").get().c,
+    };
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
 });
 
 router.get('/admin/users/pending', (req, res) => {
-    try {
-        const users = db.prepare("SELECT id, email, full_name, created_at FROM profiles WHERE status = 'pending' ORDER BY created_at DESC").all();
-        const usersWithRoles = users.map(u => {
-            const roles = db.prepare("SELECT role FROM user_roles WHERE user_id = ?").all(u.id).map(r => r.role);
-            return { ...u, roles };
-        });
-        res.json(usersWithRoles);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch pending users' });
-    }
+  try {
+    const users = db.prepare("SELECT id, email, full_name, created_at FROM profiles WHERE status = 'pending' ORDER BY created_at DESC").all();
+    const usersWithRoles = users.map(u => {
+      const roles = db.prepare("SELECT role FROM user_roles WHERE user_id = ?").all(u.id).map(r => r.role);
+      return { ...u, roles };
+    });
+    res.json(usersWithRoles);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pending users' });
+  }
 });
 
 router.get('/admin/users/providers', (req, res) => {
-    try {
-        // Fetch users who have roles (excluding admin/patient)
-        // We need: id, email, full_name, status, role, facility_name
-        
-        // 1. Get all users with roles
-        const users = db.prepare(`
+  try {
+    // Fetch users who have roles (excluding admin/patient)
+    // We need: id, email, full_name, status, role, facility_name
+
+    // 1. Get all users with roles
+    const users = db.prepare(`
             SELECT p.id, p.email, p.full_name, p.status, ur.role, f.name as facility_name, ms.status as staff_status
             FROM profiles p
             JOIN user_roles ur ON p.id = ur.user_id
@@ -189,45 +217,79 @@ router.get('/admin/users/providers', (req, res) => {
             LEFT JOIN facilities f ON ms.facility_id = f.id
             WHERE ur.role NOT IN ('admin', 'patient')
         `).all();
-        
-        // Transform if necessary, or just return. 
-        // Note: The previous logic iterated users and roles separately. 
-        // A direct join is more efficient.
-        
-        // We might have duplicates if a user has multiple roles? 
-        // But in this system, it seems 1 role per user is standard for now.
-        
-        res.json(users);
-    } catch (error) {
-         console.error("Error fetching providers:", error);
-         res.status(500).json({ error: 'Failed to fetch providers' });
-    }
+
+    // Transform if necessary, or just return. 
+    // Note: The previous logic iterated users and roles separately. 
+    // A direct join is more efficient.
+
+    // We might have duplicates if a user has multiple roles? 
+    // But in this system, it seems 1 role per user is standard for now.
+
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching providers:", error);
+    res.status(500).json({ error: 'Failed to fetch providers' });
+  }
 });
 
 router.post('/admin/users/:id/activate', (req, res) => {
-    const { id } = req.params;
-    const { role } = req.body;
-    try {
-        db.transaction(() => {
-            if (role) {
-                db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(require('crypto').randomUUID(), id, role);
-            }
-            db.prepare("UPDATE profiles SET status = 'active' WHERE id = ?").run(id);
-        })();
-        res.json({ success: true });
-    } catch (error) {
-        console.error("Activate error:", error);
-        res.status(500).json({ error: 'Failed to activate user' });
-    }
+  const { id } = req.params;
+  const { role } = req.body;
+  try {
+    db.transaction(() => {
+      if (role) {
+        db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(require('crypto').randomUUID(), id, role);
+      }
+      db.prepare("UPDATE profiles SET status = 'active' WHERE id = ?").run(id);
+    })();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Activate error:", error);
+    res.status(500).json({ error: 'Failed to activate user' });
+  }
+});
+
+router.put('/admin/users/:id/facility', (req, res) => {
+  const { id } = req.params;
+  const { facilityId, role } = req.body;
+
+  try {
+    const { randomUUID } = require('crypto');
+
+    db.transaction(() => {
+      // Upsert medical_staff record
+      const existingStaff = db.prepare('SELECT id FROM medical_staff WHERE user_id = ?').get(id);
+
+      if (existingStaff) {
+        db.prepare(`
+                    UPDATE medical_staff 
+                    SET facility_id = ?, staff_type = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE user_id = ?
+                 `).run(facilityId, role, id);
+      } else {
+        db.prepare(`
+                    INSERT INTO medical_staff (id, user_id, facility_id, staff_type, status)
+                    VALUES (?, ?, ?, ?, 'active')
+                 `).run(randomUUID(), id, facilityId, role);
+      }
+    })();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Assign facility error:", error);
+    console.error("Params:", { id, facilityId, role });
+    if (error.code) console.error("DB Error Code:", error.code);
+    res.status(500).json({ error: 'Failed to assign facility', details: error.message });
+  }
 });
 
 router.get('/facility-levels', (req, res) => {
-    try {
-        const levels = db.prepare('SELECT * FROM facility_levels ORDER BY level DESC').all();
-        res.json(levels);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch levels' });
-    }
+  try {
+    const levels = db.prepare('SELECT * FROM facility_levels ORDER BY level DESC').all();
+    res.json(levels);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch levels' });
+  }
 });
 
 // Override facilities to join with levels
@@ -242,13 +304,13 @@ router.get('/facilities', (req, res) => {
     // Transform to nested object if necessary, or just return flattened
     // Frontend expects nested facility_levels object:
     const result = facilities.map(f => ({
-        ...f,
-        facility_levels: {
-            id: f.level_id,
-            name: f.level_name,
-            description: f.level_description,
-            level: f.level_number
-        }
+      ...f,
+      facility_levels: {
+        id: f.level_id,
+        name: f.level_name,
+        description: f.level_description,
+        level: f.level_number
+      }
     }));
     res.json(result);
   } catch (error) {
@@ -260,9 +322,11 @@ router.get('/facilities', (req, res) => {
 router.get('/patients', (req, res) => {
   try {
     const patients = db.prepare(`
-      SELECT p.id, p.email, p.full_name, p.phone, p.status, p.created_at, p.updated_at
+      SELECT p.id, p.email, p.full_name, p.phone, p.status, p.created_at, p.updated_at, f.name as facility_name
       FROM profiles p
       JOIN user_roles ur ON p.id = ur.user_id
+      LEFT JOIN medical_staff ms ON p.id = ms.user_id
+      LEFT JOIN facilities f ON ms.facility_id = f.id
       WHERE ur.role = 'patient' AND p.status = 'active'
       ORDER BY p.full_name
     `).all();
@@ -274,13 +338,13 @@ router.get('/patients', (req, res) => {
 });
 
 router.post('/admin/codes', (req, res) => {
-    const { code, role } = req.body;
-    try {
-        db.prepare("INSERT INTO registration_codes (id, code, role, is_active) VALUES (?, ?, ?, 1)").run(require('crypto').randomUUID(), code, role);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to create code' });
-    }
+  const { code, role } = req.body;
+  try {
+    db.prepare("INSERT INTO registration_codes (id, code, role, is_active) VALUES (?, ?, ?, 1)").run(require('crypto').randomUUID(), code, role);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create code' });
+  }
 });
 
 
@@ -314,27 +378,27 @@ router.put('/notifications/read-all', (req, res) => {
 });
 
 router.post('/notifications', (req, res) => {
-    const { title, message, recipient } = req.body;
-    try {
-        let targets = [];
-        if (recipient === 'all') {
-            targets = db.prepare("SELECT id FROM profiles WHERE status = 'active'").all().map(u => u.id);
-        } else {
-            targets = db.prepare("SELECT user_id FROM user_roles WHERE role = ?").all(recipient).map(u => u.user_id);
-        }
-        
-        const stmt = db.prepare("INSERT INTO notifications (id, user_id, title, message, type) VALUES (?, ?, ?, ?, 'admin')");
-        db.transaction(() => {
-            targets.forEach(userId => {
-                stmt.run(require('crypto').randomUUID(), userId, title, message);
-            });
-        })();
-        
-        res.json({ success: true });
-    } catch (error) {
-        console.error("Send notification error:", error);
-        res.status(500).json({ error: 'Failed to send notifications' });
+  const { title, message, recipient } = req.body;
+  try {
+    let targets = [];
+    if (recipient === 'all') {
+      targets = db.prepare("SELECT id FROM profiles WHERE status = 'active'").all().map(u => u.id);
+    } else {
+      targets = db.prepare("SELECT user_id FROM user_roles WHERE role = ?").all(recipient).map(u => u.user_id);
     }
+
+    const stmt = db.prepare("INSERT INTO notifications (id, user_id, title, message, type) VALUES (?, ?, ?, ?, 'admin')");
+    db.transaction(() => {
+      targets.forEach(userId => {
+        stmt.run(require('crypto').randomUUID(), userId, title, message);
+      });
+    })();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Send notification error:", error);
+    res.status(500).json({ error: 'Failed to send notifications' });
+  }
 });
 
 // === FAQs ===
@@ -365,22 +429,22 @@ router.post('/feedback', (req, res) => {
 // === Admin Security Stats ===
 router.get('/admin/security-stats', (req, res) => {
   try {
-     // 1. Failed Logins (last 24h)
-     const failedLogins = db.prepare(`
+    // 1. Failed Logins (last 24h)
+    const failedLogins = db.prepare(`
         SELECT COUNT(*) as count FROM audit_logs 
         WHERE action = 'LOGIN_FAILED' 
         AND created_at > datetime('now', '-1 day')
      `).get().count;
 
-     // 2. Active Sessions (Unique successful logins in last 24h) - Proxy for active sessions
-     const activeSessions = db.prepare(`
+    // 2. Active Sessions (Unique successful logins in last 24h) - Proxy for active sessions
+    const activeSessions = db.prepare(`
         SELECT COUNT(DISTINCT user_id) as count FROM audit_logs 
         WHERE action = 'LOGIN_SUCCESS' 
         AND created_at > datetime('now', '-1 day')
      `).get().count;
 
-     // 3. Recent Audit Logs
-     const logs = db.prepare(`
+    // 3. Recent Audit Logs
+    const logs = db.prepare(`
         SELECT a.*, p.full_name, p.email 
         FROM audit_logs a
         LEFT JOIN profiles p ON a.user_id = p.id
@@ -388,17 +452,17 @@ router.get('/admin/security-stats', (req, res) => {
         LIMIT 10
      `).all();
 
-     // 4. Security Score (Mock calculation for now, or based on failures)
-     // Base 100, minus 5 per failure in last 24h
-     let securityScore = 100 - (failedLogins * 5);
-     if (securityScore < 0) securityScore = 0;
+    // 4. Security Score (Mock calculation for now, or based on failures)
+    // Base 100, minus 5 per failure in last 24h
+    let securityScore = 100 - (failedLogins * 5);
+    if (securityScore < 0) securityScore = 0;
 
-     res.json({
-         failedLogins,
-         activeSessions,
-         securityScore,
-         logs
-     });
+    res.json({
+      failedLogins,
+      activeSessions,
+      securityScore,
+      logs
+    });
   } catch (error) {
     console.error("Security stats error:", error);
     res.status(500).json({ error: 'Failed to fetch security stats' });
@@ -436,7 +500,7 @@ router.get('/consents', (req, res) => {
 router.post('/consents', (req, res) => {
   const { entity_type, entity_id, entity_name, status } = req.body;
   const { randomUUID } = require('crypto');
-  
+
   try {
     // Check if consent already exists
     const existing = db.prepare(`
@@ -456,7 +520,7 @@ router.post('/consents', (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(randomUUID(), req.user.id, entity_type, entity_id, entity_name, status);
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating consent:', error);

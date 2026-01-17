@@ -45,6 +45,7 @@ export const dataApi = {
   getHealthcareProviders: () => api.get('/admin/users/providers'),
   getPatients: () => api.get('/patients'),
   activateUser: (userId: string, role?: string) => api.post(`/admin/users/${userId}/activate`, { role }),
+  assignFacility: (userId: string, data: { facilityId: string, role: string }) => api.put(`/admin/users/${userId}/facility`, data),
   createRegistrationCode: (data: any) => api.post('/admin/codes', data),
   getFacilityLevels: () => api.get('/facility-levels'),
   // Generic notification send (admin)
