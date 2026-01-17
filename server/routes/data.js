@@ -45,7 +45,7 @@ router.get('/referrals', (req, res) => {
       query += ` WHERE r.referring_doctor_id = ? OR r.assigned_doctor_id = ?`;
       params.push(req.user.id, req.user.id);
     } else if (roles.includes('nurse')) {
-       query += ` WHERE r.assigned_nurse_id = ?`;
+       query += ` WHERE (r.assigned_nurse_id = ? OR r.assigned_nurse_id IS NULL)`;
        params.push(req.user.id);
     }
     
@@ -78,10 +78,32 @@ router.post('/referrals', (req, res) => {
 
     if (!finalPatientId && patientEmail) {
       const patient = db.prepare('SELECT id FROM profiles WHERE email = ?').get(patientEmail);
-      if (!patient) {
-        return res.status(404).json({ error: 'Patient not found with this email' });
+      if (patient) {
+        finalPatientId = patient.id;
+      } else if (req.body.patientName) {
+        // Create new pending patient
+        finalPatientId = randomUUID();
+        const newPatient = {
+             id: finalPatientId,
+             email: patientEmail,
+             full_name: req.body.patientName,
+             status: 'pending'
+        };
+        
+        db.transaction(() => {
+             db.prepare(`
+                INSERT INTO profiles (id, email, full_name, status)
+                VALUES (?, ?, ?, ?)
+             `).run(newPatient.id, newPatient.email, newPatient.full_name, newPatient.status);
+             
+             db.prepare(`
+                INSERT INTO user_roles (id, user_id, role)
+                VALUES (?, ?, ?)
+             `).run(randomUUID(), newPatient.id, 'patient');
+        })();
+      } else {
+         return res.status(404).json({ error: 'Patient not found and no name provided for creation' });
       }
-      finalPatientId = patient.id;
     }
 
     if (!finalPatientId) {
@@ -95,9 +117,9 @@ router.post('/referrals', (req, res) => {
     const referring_doctor_id = req.user.id; 
 
     db.prepare(`
-      INSERT INTO referrals (id, patient_id, referring_doctor_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, finalPatientId, referring_doctor_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes);
+      INSERT INTO referrals (id, patient_id, referring_doctor_id, assigned_nurse_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, finalPatientId, referring_doctor_id, req.body.assigned_nurse_id || null, facility_from, facility_to, reason, urgency, status, diagnosis, notes);
 
     res.json({ message: 'Referral created', id });
   } catch (error) {

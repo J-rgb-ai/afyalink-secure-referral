@@ -161,20 +161,20 @@ const PatientDashboard = () => {
     }
   };
 
-  const generateReport = () => {
+  /* 
+   * Updated Report Generation to match Doctor/Admin style 
+   */
+  const downloadReport = () => {
     let filteredData = [...referrals];
 
     // Filter by date range
-    if (startDate && startTime) {
-      const startDateTime = new Date(`${startDate}T${startTime}`);
-      filteredData = filteredData.filter(r => new Date(r.created_at) >= startDateTime);
+    if (startDate) {
+        filteredData = filteredData.filter(r => new Date(r.created_at) >= new Date(startDate));
     }
-    if (endDate && endTime) {
-      const endDateTime = new Date(`${endDate}T${endTime}`);
-      filteredData = filteredData.filter(r => new Date(r.created_at) <= endDateTime);
+    if (endDate) {
+        filteredData = filteredData.filter(r => new Date(r.created_at) <= new Date(endDate));
     }
 
-    // Filter by status
     if (statusFilter !== "all") {
       const statusMap: Record<string, string[]> = {
         "pending": ["pending"],
@@ -186,64 +186,96 @@ const PatientDashboard = () => {
       filteredData = filteredData.filter(r => allowedStatuses.includes(r.status));
     }
 
-    return filteredData;
-  };
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const today = new Date().toLocaleDateString();
 
-  const downloadReport = () => {
-    const reportData = generateReport();
-
-    const reportTypeNames: Record<string, string> = {
-      referral_history: "My Referral History",
-      visit_history: "My Visit History",
-      health_reports: "My Submitted Health Reports",
+    const centerText = (text: string, y: number, size = 12) => {
+        doc.setFontSize(size);
+        const textWidth = doc.getStringUnitWidth(text) * size / doc.internal.scaleFactor;
+        const x = (pageWidth - textWidth) / 2;
+        doc.text(text, x, y);
     };
 
-    // Initialize jsPDF
-    const doc = new jsPDF();
+    // --- Header ---
+    doc.setTextColor(0, 0, 0);
+    centerText("AfyaLink Secure Referral", 20, 18);
+    centerText("My Referral History", 28, 14);
 
-    // Title
-    doc.setFontSize(16);
-    doc.text(reportTypeNames[reportType] || "Report", 14, 20);
-
-    // Generated date
     doc.setFontSize(10);
-    doc.text(`Generated at: ${new Date().toLocaleString()}`, 14, 30);
+    doc.text(`Generated on: ${today}`, 20, 35);
+    doc.text(`Patient: ${user?.full_name || 'Unknown'}`, 20, 40);
+    doc.text(`Status Filter: ${statusFilter}`, 20, 45);
 
-    // Filters
-    const filters = [
-      `Start Date: ${startDate && startTime ? `${startDate} ${startTime}` : "Not set"}`,
-      `End Date: ${endDate && endTime ? `${endDate} ${endTime}` : "Not set"}`,
-      `Status: ${statusFilter}`,
-    ];
-    filters.forEach((f, i) => {
-      doc.text(f, 14, 40 + i * 6);
+    doc.setLineWidth(0.5);
+    doc.line(20, 50, pageWidth - 20, 50);
+
+    // --- Table Setup ---
+    let yPos = 60;
+    const headers = ["Date", "Facility To", "Status", "Doctor"];
+    const colWidths = [40, 50, 40, 50];
+    const startX = 14;
+
+    const drawHeader = (y: number) => {
+         doc.setFillColor(0, 51, 102);
+         doc.rect(startX, y - 6, pageWidth - 28, 8, 'F');
+         doc.setTextColor(255, 255, 255);
+         doc.setFontSize(10);
+         doc.setFont("helvetica", "bold");
+         
+         let xPos = startX + 2;
+         headers.forEach((header, i) => {
+             doc.text(header, xPos, y);
+             xPos += colWidths[i];
+         });
+         doc.setTextColor(0, 0, 0);
+         doc.setFont("helvetica", "normal");
+    };
+
+    drawHeader(yPos);
+    yPos += 8;
+
+    filteredData.forEach((r, index) => {
+        if (yPos > 280) {
+            doc.addPage();
+            yPos = 20;
+            drawHeader(yPos);
+            yPos += 8;
+        }
+
+        if (index % 2 === 1) {
+            doc.setFillColor(245, 245, 245);
+            doc.rect(startX, yPos - 6, pageWidth - 28, 8, 'F');
+        }
+
+        let xRow = startX + 2;
+        const dateStr = new Date(r.created_at).toLocaleDateString();
+        const facilityTo = r.facility_to || "N/A";
+        const statusStr = r.status.replace("_", " ");
+        const doctorName = r.assigned_doctor?.full_name || r.referring_doctor?.full_name || "N/A";
+
+        const rowData = [dateStr, facilityTo, statusStr, doctorName];
+        
+        rowData.forEach((text, i) => {
+            let finalText = text;
+            if (text.length > 25) finalText = text.substring(0, 22) + "...";
+            doc.text(finalText, xRow, yPos);
+            xRow += colWidths[i];
+        });
+        yPos += 8;
     });
 
-    // Table header
-    const startY = 60;
-    doc.setFontSize(12);
-    doc.text("Patient", 14, startY);
-    doc.text("Facility To", 70, startY);
-    doc.text("Status", 130, startY);
-    doc.text("Created", 180, startY);
+    // --- Footer ---
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        doc.text("Confidential Patient Record", 20, 290);
+        doc.text(`Page ${i} of ${pageCount}`, pageWidth - 30, 290);
+    }
 
-    // Table rows
-    let y = startY + 6;
-    reportData.forEach((r: any) => {
-      if (y > 280) {
-        doc.addPage();
-        y = 20;
-      }
-      doc.setFontSize(10);
-      doc.text(r.patient?.full_name ?? "", 14, y);
-      doc.text(r.facility_to ?? "", 70, y);
-      doc.text(r.status ?? "", 130, y);
-      doc.text(new Date(r.created_at).toLocaleDateString(), 180, y);
-      y += 6;
-    });
-
-    // Save PDF
-    doc.save(`${reportType}_${new Date().toISOString().split("T")[0]}.pdf`);
+    doc.save(`patient_report_${new Date().toISOString().split("T")[0]}.pdf`);
   };
 
   // Derive potential consent targets
@@ -265,14 +297,6 @@ const PatientDashboard = () => {
     const currentConsent = consents.find(c => c.entity_id === target.id && c.entity_type === target.type);
     const newStatus = currentConsent?.status === 'granted' ? 'revoked' : 'granted';
 
-    // Optimistic update
-    const previousConsents = [...consents];
-    if (currentConsent) {
-      setConsents(prev => prev.map(c => c.id === currentConsent.id ? { ...c, status: newStatus } : c));
-    } else {
-       setConsents(prev => [...prev, { entity_id: target.id, entity_type: target.type, status: newStatus }]);
-    }
-
     try {
       await dataApi.updateConsent({
         entity_type: target.type,
@@ -283,7 +307,6 @@ const PatientDashboard = () => {
       fetchConsents(); 
     } catch (error) {
       console.error("Failed to update consent");
-      setConsents(previousConsents); // Revert
     }
   };
 
@@ -322,14 +345,14 @@ const PatientDashboard = () => {
           <Shield size={20} /> Consent Management
         </Button>
         <Button
-          variant="ghost"
+          variant={activeTab === "faq" ? "secondary" : "ghost"}
           className="w-full justify-start gap-3 mb-2"
           onClick={() => navigate("/faq")}
         >
           <FileText size={20} /> FAQ
         </Button>
         <Button
-          variant="ghost"
+          variant={activeTab === "feedback" ? "secondary" : "ghost"}
           className="w-full justify-start gap-3 mb-2"
           onClick={() => navigate("/feedback")}
         >
@@ -522,7 +545,7 @@ const PatientDashboard = () => {
                           </div>
 
                           <div>
-                            <span className="font-semibold">Reason for Referral:</span>
+                            <span className="font-semibold">Reason:</span>
                             <p>{referral.reason}</p>
                           </div>
 
@@ -565,87 +588,59 @@ const PatientDashboard = () => {
               <CardHeader>
                 <CardTitle className="text-xl">Generate Report</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="start-date">Start Date & Time</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="start-date"
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Input
-                        type="time"
-                        value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
-                        className="flex-1"
-                      />
+              <CardContent>
+                <form onSubmit={(e) => { e.preventDefault(); downloadReport(); }} className="space-y-4">
+                    <div className="flex gap-4">
+                      <div className="grid gap-2 flex-1">
+                        <Label htmlFor="start-date">Start Date <span className="text-destructive">*</span></Label>
+                        <Input
+                          required
+                          id="start-date"
+                          type="date"
+                          value={startDate}
+                          max={new Date().toISOString().split('T')[0]}
+                          onChange={(e) => setStartDate(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2 flex-1">
+                        <Label htmlFor="end-date">End Date <span className="text-destructive">*</span></Label>
+                        <Input
+                          required
+                          id="end-date"
+                          type="date"
+                          value={endDate}
+                          max={new Date().toISOString().split('T')[0]}
+                          onChange={(e) => setEndDate(e.target.value)}
+                        />
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="end-date">End Date & Time</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="end-date"
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Input
-                        type="time"
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        className="flex-1"
-                      />
+                    <div className="grid gap-2">
+                      <Label htmlFor="status-filter">Status Filter</Label>
+                      <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger id="status-filter">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Statuses</SelectItem>
+                          <SelectItem value="pending">Pending Review</SelectItem>
+                          <SelectItem value="under_review">Under Clinical Review</SelectItem>
+                          <SelectItem value="reviewed">Reviewed</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="report-type">Report Type</Label>
-                    <Select value={reportType} onValueChange={setReportType}>
-                      <SelectTrigger id="report-type">
-                        <SelectValue placeholder="Select report type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="referral_history">My Referral History</SelectItem>
-                        <SelectItem value="visit_history">My Visit History</SelectItem>
-                        <SelectItem value="health_reports">My Submitted Health Reports</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="status-filter">Status Filter</Label>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger id="status-filter">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Statuses</SelectItem>
-                        <SelectItem value="pending">Pending Review</SelectItem>
-                        <SelectItem value="under_review">Under Clinical Review</SelectItem>
-                        <SelectItem value="reviewed">Reviewed</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <Button
-                  onClick={downloadReport}
-                  className="w-full md:w-auto"
-                  size="lg"
-                >
-                  <Download className="mr-2 h-5 w-5" />
-                  Generate & Download Report
-                </Button>
+                    <Button
+                      type="submit"
+                      className="w-full md:w-auto"
+                      size="lg"
+                    >
+                      <Download className="mr-2 h-5 w-5" />
+                      Generate & Download Report
+                    </Button>
+                </form>
               </CardContent>
             </Card>
           )}

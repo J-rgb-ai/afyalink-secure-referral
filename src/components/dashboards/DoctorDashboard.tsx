@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { authApi, dataApi } from "@/lib/api";
+import { jsPDF } from "jspdf";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowDownLeft, ArrowUpRight, Plus, FileText, Check, X, AlertCircle, Heart, TrendingUp, ClipboardList, MessageSquare, LogOut, Menu, Bell, Search, Shield } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Plus, FileText, Check, X, AlertCircle, Heart, TrendingUp, ClipboardList, MessageSquare, LogOut, Menu, Bell, Search, Shield, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
     Dialog,
@@ -35,14 +36,18 @@ const DoctorDashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [referrals, setReferrals] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [nurses, setNurses] = useState<any[]>([]);
+  const [facilities, setFacilities] = useState<any[]>([]);
   const [newReferral, setNewReferral] = useState({
     patientEmail: "",
+    patientName: "", // Added
     facilityFrom: "",
     facilityTo: "",
     reason: "",
     diagnosis: "",
     notes: "",
     urgency: "medium",
+    assignedNurseId: "_none",
   });
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -51,6 +56,8 @@ const DoctorDashboard = () => {
     fetchUser();
     fetchReferrals();
     fetchNotifications();
+    fetchNurses();
+    fetchFacilities();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -72,6 +79,37 @@ const DoctorDashboard = () => {
       console.error("Error fetching referrals:", error);
     }
   };
+
+  const fetchNurses = async () => {
+    try {
+      const { data } = await dataApi.getHealthcareProviders();
+      // Filter for nurses only
+      const nurseList = data.filter((u: any) => u.role === 'nurse');
+      setNurses(nurseList);
+    } catch (error) {
+      console.error("Error fetching nurses:", error);
+    }
+  };
+
+  const fetchFacilities = async () => {
+    try {
+      const { data } = await dataApi.getFacilities();
+      setFacilities(data || []);
+    } catch (error) {
+       console.error("Error fetching facilities:", error);
+    }
+  };
+
+  const groupedFacilities = useMemo(() => {
+     const grouped: Record<string, any[]> = {};
+     facilities.forEach(f => {
+         const level = f.facility_levels?.name || "Other";
+         if (!grouped[level]) grouped[level] = [];
+         grouped[level].push(f);
+     });
+     // Sort levels if needed, or just return object entries
+     return Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [facilities]);
 
   const fetchNotifications = async () => {
     try {
@@ -129,24 +167,28 @@ const DoctorDashboard = () => {
     try {
       await dataApi.createReferral({
         patientEmail: newReferral.patientEmail,
+        patientName: newReferral.patientName,
         facility_from: newReferral.facilityFrom,
         facility_to: newReferral.facilityTo,
         reason: newReferral.reason,
         diagnosis: newReferral.diagnosis,
         notes: newReferral.notes,
         urgency: newReferral.urgency,
+        assigned_nurse_id: newReferral.assignedNurseId === "_none" ? null : newReferral.assignedNurseId,
       });
 
       toast({ title: "Referral created successfully" });
       setShowForm(false);
       setNewReferral({
         patientEmail: "",
+        patientName: "",
         facilityFrom: "",
         facilityTo: "",
         reason: "",
         diagnosis: "",
         notes: "",
         urgency: "medium",
+        assignedNurseId: "_none",
       });
       fetchReferrals();
     } catch (error: any) {
@@ -193,6 +235,13 @@ const DoctorDashboard = () => {
           onClick={() => setActiveTab("referrals")}
         >
           <ClipboardList size={20} /> Referrals
+        </Button>
+        <Button
+          variant={activeTab === "reports" ? "secondary" : "ghost"}
+          className="w-full justify-start gap-3 mb-2"
+          onClick={() => setActiveTab("reports")}
+        >
+          <FileText size={20} /> Reports
         </Button>
         <Button
           variant="ghost"
@@ -396,12 +445,28 @@ const DoctorDashboard = () => {
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="facilityTo">To Facility</Label>
-                          <Input
-                            id="facilityTo"
+                          <Select
                             value={newReferral.facilityTo}
-                            onChange={(e) => setNewReferral({ ...newReferral, facilityTo: e.target.value })}
-                            required
-                          />
+                            onValueChange={(value) => setNewReferral({ ...newReferral, facilityTo: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select facility" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {groupedFacilities.map(([level, facilities]) => (
+                                <div key={level}>
+                                  <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground bg-muted/20">
+                                    {level}
+                                  </div>
+                                  {facilities.map((facility: any) => (
+                                    <SelectItem key={facility.id} value={facility.name}>
+                                      {facility.name} (L{facility.facility_levels?.level})
+                                    </SelectItem>
+                                  ))}
+                                </div>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -430,6 +495,25 @@ const DoctorDashboard = () => {
                           onChange={(e) => setNewReferral({ ...newReferral, notes: e.target.value })}
                           placeholder="Additional clinical notes..."
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="assignedNurse">Assign Nurse (Optional)</Label>
+                        <Select
+                          value={newReferral.assignedNurseId}
+                          onValueChange={(value) => setNewReferral({ ...newReferral, assignedNurseId: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a nurse" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="_none">None</SelectItem>
+                            {nurses.map((nurse) => (
+                              <SelectItem key={nurse.id} value={nurse.id}>
+                                {nurse.full_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <Button type="submit">Create Referral</Button>
                     </form>
@@ -484,6 +568,10 @@ const DoctorDashboard = () => {
                 </Tabs>
               </div>
             </>
+          )}
+
+          {activeTab === "reports" && (
+              <ReportGenerator referrals={referrals} user={user} />
           )}
         </div>
       </main>
@@ -627,6 +715,160 @@ const ReferralCard = ({ referral, type, onUpdateStatus }: { referral: any, type:
                          )}
                     </div>
                 </div>
+            </CardContent>
+        </Card>
+    );
+};
+
+const ReportGenerator = ({ referrals, user }: { referrals: any[], user: any }) => {
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
+
+    const generateReport = () => {
+        let filteredData = [...referrals];
+
+        if (startDate) {
+            filteredData = filteredData.filter(r => new Date(r.created_at) >= new Date(startDate));
+        }
+        if (endDate) {
+            filteredData = filteredData.filter(r => new Date(r.created_at) <= new Date(endDate));
+        }
+
+        if (statusFilter !== "all") {
+             filteredData = filteredData.filter(r => r.status === statusFilter);
+        }
+
+        const doc = new jsPDF();
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const today = new Date().toLocaleDateString();
+
+        // Helper for centered text
+        const centerText = (text: string, y: number, size = 12) => {
+            doc.setFontSize(size);
+            const textWidth = doc.getStringUnitWidth(text) * size / doc.internal.scaleFactor;
+            const x = (pageWidth - textWidth) / 2;
+            doc.text(text, x, y);
+        };
+        
+        // --- Header ---
+        doc.setTextColor(0, 0, 0);
+        centerText("AfyaLink Secure Referral", 20, 18);
+        centerText("Referral Activity Report", 28, 14);
+        
+        doc.setFontSize(10);
+        doc.text(`Generated on: ${today}`, 20, 35);
+        doc.text(`Generated by: Dr. ${user?.full_name || 'Unknown'}`, 20, 40);
+        doc.text(`Filters: ${startDate || 'All Time'} - ${endDate || 'Present'} | Status: ${statusFilter}`, 20, 45);
+
+        doc.setLineWidth(0.5);
+        doc.line(20, 50, pageWidth - 20, 50);
+
+        // --- Table Setup ---
+        let yPos = 60;
+        const headers = ["Date", "Patient", "To Facility", "Status"];
+        const colWidths = [40, 50, 60, 40];
+        const startX = 14;
+
+        // Draw Header
+        const drawHeader = (y: number) => {
+             doc.setFillColor(0, 51, 102); // Dark Blue
+             doc.rect(startX, y - 6, pageWidth - 28, 8, 'F');
+             doc.setTextColor(255, 255, 255);
+             doc.setFontSize(10);
+             doc.setFont("helvetica", "bold");
+             
+             let xPos = startX + 2;
+             headers.forEach((header, i) => {
+                 doc.text(header, xPos, y);
+                 xPos += colWidths[i];
+             });
+             doc.setTextColor(0, 0, 0);
+             doc.setFont("helvetica", "normal");
+        };
+
+        drawHeader(yPos);
+        yPos += 8;
+
+        // --- Data ---
+        filteredData.forEach((r, index) => {
+             if (yPos > 280) {
+                 doc.addPage();
+                 yPos = 20;
+                 drawHeader(yPos);
+                 yPos += 8;
+             }
+
+             if (index % 2 === 1) {
+                 doc.setFillColor(245, 245, 245);
+                 doc.rect(startX, yPos - 6, pageWidth - 28, 8, 'F');
+             }
+
+             let xRow = startX + 2;
+             const dateStr = new Date(r.created_at).toLocaleDateString();
+             const patientName = r.patient?.full_name || "Unknown";
+             const facilityTo = r.facility_to || "N/A";
+             const statusStr = r.status.replace("_", " ");
+             
+             const rowData = [dateStr, patientName, facilityTo, statusStr];
+             
+             rowData.forEach((text, i) => {
+                 // Simple truncation
+                 let finalText = text;
+                 // Approx char width logic is flawed without proper measurement, just safe truncation
+                 if (text.length > 25) finalText = text.substring(0, 22) + "...";
+                 
+                 doc.text(finalText, xRow, yPos);
+                 xRow += colWidths[i];
+             });
+             
+             yPos += 8;
+        });
+
+        // --- Footer ---
+        const pageCount = doc.internal.getNumberOfPages();
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            doc.text("Confidential Medical Record - For Internal Use Only", 20, 290);
+            doc.text(`Page ${i} of ${pageCount}`, pageWidth - 30, 290);
+        }
+
+        doc.save("referral_report.pdf");
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Generate Report</CardTitle>
+            </CardHeader>
+            <CardContent>
+                <form onSubmit={(e) => { e.preventDefault(); generateReport(); }} className="space-y-4">
+                    <div className="flex gap-4">
+                        <div className="grid gap-2 flex-1">
+                            <Label>Start Date <span className="text-destructive">*</span></Label>
+                            <Input required type="date" value={startDate} max={new Date().toISOString().split('T')[0]} onChange={e => setStartDate(e.target.value)} />
+                        </div>
+                        <div className="grid gap-2 flex-1">
+                            <Label>End Date <span className="text-destructive">*</span></Label>
+                            <Input required type="date" value={endDate} max={new Date().toISOString().split('T')[0]} onChange={e => setEndDate(e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Status</Label>
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="completed">Completed</SelectItem>
+                                <SelectItem value="rejected">Rejected</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <Button type="submit"><Download className="mr-2 h-4 w-4"/> Download PDF</Button>
+                </form>
             </CardContent>
         </Card>
     );
