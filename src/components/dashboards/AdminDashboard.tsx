@@ -242,8 +242,10 @@ const AdminDashboard = () => {
   const [loadingPatients, setLoadingPatients] = useState(false);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [allNotifications, setAllNotifications] = useState<any[]>([]);
+  const [sentNotifications, setSentNotifications] = useState<any[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [newNotification, setNewNotification] = useState({ title: "", message: "", recipient: "all" });
+  const [sendingNotification, setSendingNotification] = useState(false);
 
 
   // Facility Assignment State
@@ -308,6 +310,7 @@ const AdminDashboard = () => {
     fetchHealthcareProviders();
     fetchPatients();
     fetchAllNotifications();
+    fetchSentNotifications();
   }, []);
 
   useEffect(() => {
@@ -380,6 +383,15 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchSentNotifications = async () => {
+    try {
+      const { data } = await dataApi.getSentNotifications();
+      setSentNotifications(data || []);
+    } catch (error) {
+      console.error("Error fetching sent notifications:", error);
+    }
+  };
+
   const markAsRead = async (id: string) => {
     try {
       await dataApi.markNotificationRead(id);
@@ -431,6 +443,7 @@ const AdminDashboard = () => {
       // Re-fetch to show the new notification if it was sent to self/admin, though in reality it goes to others
       // But we might want to see it in a "Sent" list? 
       // For now, assume this is for sending OUT. The bell shows RECEIVED.
+      fetchSentNotifications();
     } catch (error: any) {
       toast({
         title: "Error",
@@ -2299,16 +2312,16 @@ const AdminDashboard = () => {
                 <CardContent>
                   {loadingNotifications ? (
                     <p className="text-center text-muted-foreground py-4">Loading...</p>
-                  ) : allNotifications.length === 0 ? (
+                  ) : sentNotifications.length === 0 ? (
                     <p className="text-center text-muted-foreground py-4">No notifications sent yet</p>
                   ) : (
                     <div className="space-y-3">
-                      {allNotifications.map((notif) => (
+                      {sentNotifications.map((notif) => (
                         <div key={notif.id} className="p-3 bg-muted/30 rounded-lg">
                           <div className="flex items-center justify-between">
                             <p className="font-semibold">{notif.title}</p>
-                            <Badge variant={notif.is_read ? "secondary" : "default"}>
-                              {notif.is_read ? "Read" : "Unread"}
+                            <Badge variant="outline">
+                              Sent
                             </Badge>
                           </div>
                           <p className="text-sm text-muted-foreground mt-1">{notif.message}</p>

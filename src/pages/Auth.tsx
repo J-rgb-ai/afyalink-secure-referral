@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -175,9 +175,12 @@ const Auth = () => {
     }
   };
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const defaultTab = searchParams.get("tab") === "signup" ? "signup" : "login";
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
-      <Card className="w-full max-w-md shadow-elegant">
+      <Card className="w-full max-w-md shadow-elegant border-2 border-slate-200 dark:border-slate-700">
         <CardHeader className="space-y-1">
           <CardTitle className="text-3xl font-bold text-center bg-gradient-primary bg-clip-text text-transparent">
             AFYALINK
@@ -187,7 +190,7 @@ const Auth = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue={defaultTab} className="w-full" onValueChange={(val) => setSearchParams({ tab: val })}>
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Login</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
@@ -236,9 +239,31 @@ const Auth = () => {
                     </Button>
                   </div>
                 </div>
+
                 <Button type="submit" className="w-full" disabled={isLoading}>
                   {isLoading ? "Logging in..." : "Login"}
                 </Button>
+                
+                <div className="mt-6 flex flex-col items-center gap-2">
+                  <div className="text-sm text-muted-foreground">
+                    Don't have an account?{" "}
+                    <button 
+                      type="button" 
+                      onClick={() => setSearchParams({ tab: "signup" })} 
+                      className="font-semibold text-primary hover:underline underline-offset-4 transition-colors"
+                    >
+                      Sign up
+                    </button>
+                  </div>
+                  
+                  <button 
+                    type="button"
+                    onClick={() => navigate("/forgot-password")}
+                    className="text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1"
+                  >
+                    Forgot your password?
+                  </button>
+                </div>
               </form>
             </TabsContent>
 

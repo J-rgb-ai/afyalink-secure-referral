@@ -358,6 +358,24 @@ router.get('/notifications', (req, res) => {
   }
 });
 
+router.get('/admin/notifications/sent', (req, res) => {
+  try {
+    // Get unique notifications sent by admin (grouped by title/message since one send = multiple rows)
+    const sent = db.prepare(`
+      SELECT DISTINCT title, message, created_at, id, type 
+      FROM notifications 
+      WHERE type = 'admin' 
+      GROUP BY title, message, created_at 
+      ORDER BY created_at DESC 
+      LIMIT 20
+    `).all();
+    res.json(sent);
+  } catch (error) {
+    console.error("Error fetching sent notifications:", error);
+    res.status(500).json({ error: 'Failed to fetch sent notifications' });
+  }
+});
+
 router.put('/notifications/:id/read', (req, res) => {
   try {
     const { id } = req.params;

@@ -144,4 +144,70 @@ router.get('/me', authenticateToken, (req, res) => {
   res.json({ user: { ...profile, email: req.user.email, roles } });
 });
 
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  try {
+    const user = db.prepare('SELECT id, full_name, email FROM users JOIN profiles ON users.id = profiles.id WHERE users.email = ?').get(email);
+    if (!user) {
+      // Don't reveal user existence
+      return res.json({ message: 'If an account exists with this email, a reset link has been sent.' });
+    }
+
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 3600000).toISOString(); // 1 hour
+
+    db.prepare('INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)').run(
+      randomUUID(), user.id, token, expiresAt
+    );
+
+    const resetLink = `http://localhost:5173/reset-password?token=${token}`;
+    const { sendEmail } = require('../mailer');
+
+    await sendEmail(
+      user.email,
+      'Password Reset Request',
+      `Hello ${user.full_name},\n\nYou requested a password reset. Click the link below to reset your password:\n${resetLink}\n\nIf you did not request this, please ignore this email.`,
+      `<p>Hello ${user.full_name},</p><p>You requested a password reset. Click the link below to reset your password:</p><p><a href="${resetLink}">Reset Password</a></p><p>If you did not request this, please ignore this email.</p>`
+    );
+
+    res.json({ message: 'If an account exists with this email, a reset link has been sent.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+
+  try {
+    const resetRecord = db.prepare('SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > datetime("now")').get(token);
+
+    if (!resetRecord) {
+        return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    db.transaction(() => {
+        db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashedPassword, resetRecord.user_id);
+        db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(resetRecord.id);
+    })();
+
+    logAudit(resetRecord.user_id, 'PASSWORD_RESET', 'User reset their password via email token', 'success');
+
+    res.json({ success: true, message: 'Password has been reset successfully. You can now login.' });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 module.exports = router;

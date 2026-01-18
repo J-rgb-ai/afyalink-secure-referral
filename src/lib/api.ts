@@ -25,6 +25,8 @@ api.interceptors.response.use(
 export const authApi = {
   signup: (data: any) => api.post('/auth/signup', data),
   login: (data: any) => api.post('/auth/login', data),
+  forgotPassword: (email: string) => api.post('/auth/forgot-password', { email }),
+  resetPassword: (data: any) => api.post('/auth/reset-password', data),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
 };
@@ -50,6 +52,7 @@ export const dataApi = {
   getFacilityLevels: () => api.get('/facility-levels'),
   // Generic notification send (admin)
   sendNotification: (data: any) => api.post('/notifications', data),
+  getSentNotifications: () => api.get('/admin/notifications/sent'),
   getFaqs: () => api.get('/faqs'),
   submitFeedback: (data: any) => api.post('/feedback', data),
   // Consent
