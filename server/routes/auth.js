@@ -149,7 +149,7 @@ router.post('/forgot-password', async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Email is required' });
 
   try {
-    const user = db.prepare('SELECT id, full_name, email FROM users JOIN profiles ON users.id = profiles.id WHERE users.email = ?').get(email);
+    const user = db.prepare('SELECT users.id, full_name, users.email FROM users JOIN profiles ON users.id = profiles.id WHERE users.email = ?').get(email);
     if (!user) {
       // Don't reveal user existence
       return res.json({ message: 'If an account exists with this email, a reset link has been sent.' });

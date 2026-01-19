@@ -144,10 +144,48 @@ router.post('/referrals', (req, res) => {
     // Defaults
     const referring_doctor_id = req.user.id;
 
+    // Auto-assign Nurse Logic
+    let assigned_nurse_id = req.body.assigned_nurse_id || null;
+    
+    if (!assigned_nurse_id && facility_to) {
+        try {
+            // 1. Get facility ID from name
+            const facility = db.prepare('SELECT id FROM facilities WHERE name = ?').get(facility_to);
+            
+            if (facility) {
+                // 2. Find available nurses in this facility
+                // Nurses are in user_roles as 'nurse' AND medical_staff linked to facility
+                const nurses = db.prepare(`
+                    SELECT u.id 
+                    FROM profiles u
+                    JOIN user_roles ur ON u.id = ur.user_id
+                    JOIN medical_staff ms ON u.id = ms.user_id
+                    WHERE ur.role = 'nurse' 
+                    AND ms.facility_id = ? 
+                    AND u.status = 'active'
+                `).all(facility.id);
+
+                if (nurses.length > 0) {
+                    // 3. Randomly select one
+                    const randomIndex = Math.floor(Math.random() * nurses.length);
+                    assigned_nurse_id = nurses[randomIndex].id;
+                    console.log(`Auto-assigned nurse ${assigned_nurse_id} for referral to ${facility_to}`);
+                } else {
+                    console.log(`No nurses found in facility ${facility_to} for auto-assignment`);
+                }
+            } else {
+                 console.log(`Facility ${facility_to} not found for auto-assignment lookup`);
+            }
+        } catch (err) {
+            console.error("Error in auto-assignment logic:", err);
+            // Don't fail the referral creation just because assignment failed
+        }
+    }
+
     db.prepare(`
       INSERT INTO referrals (id, patient_id, referring_doctor_id, assigned_nurse_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, finalPatientId, referring_doctor_id, req.body.assigned_nurse_id || null, facility_from, facility_to, reason, urgency, status, diagnosis, notes);
+    `).run(id, finalPatientId, referring_doctor_id, assigned_nurse_id, facility_from, facility_to, reason, urgency, status, diagnosis, notes);
 
     res.json({ message: 'Referral created', id });
   } catch (error) {
@@ -232,16 +270,49 @@ router.get('/admin/users/providers', (req, res) => {
   }
 });
 
-router.post('/admin/users/:id/activate', (req, res) => {
+router.post('/admin/users/:id/activate', async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
+  const { sendEmail } = require('../mailer');
+  
   try {
+    // 1. Get user details for email
+    const user = db.prepare('SELECT email, full_name FROM profiles WHERE id = ?').get(id);
+
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 2. Activate
     db.transaction(() => {
       if (role) {
         db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(require('crypto').randomUUID(), id, role);
       }
       db.prepare("UPDATE profiles SET status = 'active' WHERE id = ?").run(id);
     })();
+
+    // 3. Send Email
+    try {
+        await sendEmail(
+            user.email,
+            'Account Activated - AfyaLink',
+            `Hello ${user.full_name},\n\nYour account has been approved and activated by the administrator. You can now log in to the system.\n\nLogin here: http://localhost:5173/auth`,
+            `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                <h2 style="color: #0066cc;">Account Approved</h2>
+                <p>Hello <strong>${user.full_name}</strong>,</p>
+                <p>Great news! Your account has been approved and activated by the administrator.</p>
+                <p>You can now log in to the system and access your dashboard.</p>
+                <br/>
+                <a href="http://localhost:5173/auth" style="background-color: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Login to AfyaLink</a>
+                <br/><br/>
+                <p style="font-size: 12px; color: #666;">If the button doesn't work, copy this link: http://localhost:5173/auth</p>
+            </div>`
+        );
+    } catch (mailError) {
+        console.error("Failed to send activation email:", mailError);
+        // We don't fail the request, just log it.
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error("Activate error:", error);

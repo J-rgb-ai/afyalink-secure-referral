@@ -387,11 +387,7 @@ const NurseDashboard = () => {
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
-                        {!referral.assigned_nurse_id && (
-                          <Button size="sm" onClick={() => handleAssignToMe(referral.id)}>
-                            Assign to Me
-                          </Button>
-                        )}
+
                         {referral.assigned_nurse_id && (
                           <div className="flex gap-2 items-center">
                             <span className="text-sm">Update Status:</span>
@@ -407,7 +403,7 @@ const NurseDashboard = () => {
                                 <SelectItem value="accepted">Accepted</SelectItem>
                                 <SelectItem value="in_progress">In Progress</SelectItem>
                                 <SelectItem value="completed">Completed</SelectItem>
-                                <SelectItem value="rejected">Rejected</SelectItem>
+
                               </SelectContent>
                             </Select>
                           </div>

@@ -1,13 +1,12 @@
 const nodemailer = require('nodemailer');
 
-// Use Ethereal for testing if no real SMTP is provided
-// In a real app, use environment variables for host, port, user, pass
+// Use Gmail service as requested
+// This automatically handles host and port for Gmail
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-  port: process.env.SMTP_PORT || 587,
+  service: 'gmail',
   auth: {
-    user: process.env.SMTP_USER || 'ethereal_user', 
-    pass: process.env.SMTP_PASS || 'ethereal_pass'
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
   }
 });
 
@@ -21,8 +20,8 @@ const transporter = nodemailer.createTransport({
 const sendEmail = async (to, subject, text, html) => {
   try {
     // For development without real credentials, we just log the email content
-    if (!process.env.SMTP_HOST) {
-        console.log('--- MOCK EMAIL SEND ---');
+    if (!process.env.SMTP_USER) {
+        console.log('--- MOCK EMAIL SEND (No User Configured) ---');
         console.log(`To: ${to}`);
         console.log(`Subject: ${subject}`);
         console.log(`Body: ${text}`);
@@ -32,10 +31,10 @@ const sendEmail = async (to, subject, text, html) => {
 
     const info = await transporter.sendMail({
       from: '"AfyaLink Admin" <noreply@afyalink.com>',
-      to,
-      subject,
-      text,
-      html
+      to: to, // Ensure this uses the argument 'to'
+      subject: subject,
+      text: text,
+      html: html
     });
 
     console.log("Message sent: %s", info.messageId);
